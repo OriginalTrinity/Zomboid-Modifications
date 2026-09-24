@@ -224,20 +224,6 @@ public final class HandWeapon extends InventoryItem implements IUpdater {
     }
 
     /**
-     * @return the ActualWeight
-     */
-    @Override
-    public float getActualWeight() {
-        float weight = this.getScriptItem().getActualWeight();
-
-        for (WeaponPart part : this.attachments.values()) {
-            weight += this.getWeaponPartWeightModifier(part);
-        }
-
-        return weight;
-    }
-
-    /**
      * @return the Weight
      */
     @Override
@@ -1986,6 +1972,7 @@ public final class HandWeapon extends InventoryItem implements IUpdater {
         this.activeSight = null;
         this.attachments.clear();
         this.attachmentList.clear();
+        this.calculateWeaponWeight();
     }
 
     public void clearWeaponPart(WeaponPart part) {
@@ -2000,6 +1987,7 @@ public final class HandWeapon extends InventoryItem implements IUpdater {
 
             this.attachments.remove(part.getPartType());
             this.attachmentList.remove(part);
+            this.calculateWeaponWeight();
         }
     }
 
@@ -2025,6 +2013,7 @@ public final class HandWeapon extends InventoryItem implements IUpdater {
 
                 this.attachments.put(partType, part);
                 this.attachmentList.add(part);
+                this.calculateWeaponWeight();
             }
         }
     }
@@ -2055,6 +2044,16 @@ public final class HandWeapon extends InventoryItem implements IUpdater {
 
     public void attachWeaponPart(IsoGameCharacter character, WeaponPart part) {
         this.attachWeaponPart(character, part, true);
+    }
+
+    private void calculateWeaponWeight() {
+        float weight = this.getScriptItem().getActualWeight();
+
+        for (WeaponPart part : this.attachments.values()) {
+            weight += this.getWeaponPartWeightModifier(part);
+        }
+
+        this.actualWeight = weight;
     }
 
     public void attachWeaponPart(IsoGameCharacter character, WeaponPart part, boolean doChange) {

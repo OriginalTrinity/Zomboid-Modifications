@@ -306,6 +306,7 @@ public class InventoryItem extends GameEntity {
     private long lastUpdateMs = -1L;
     protected float timeMultiplier;
     private boolean beingFilled;
+    private int splitCount = 1;
 
     public CoverType getCoverType() {
         boolean hasHardcover = this.hasTag(ItemTag.HARDCOVER, ItemTag.HOLLOW_BOOK, ItemTag.FANCY_BOOK);
@@ -2920,10 +2921,9 @@ public class InventoryItem extends GameEntity {
      * @param actualWeight the ActualWeight to set
      */
     public void setActualWeight(float actualWeight) {
-        if (actualWeight < 0.0F) {
-            actualWeight = 0.0F;
+        if (actualWeight < 0.01F) {
+            actualWeight = 0.01F;
         }
-
         this.actualWeight = actualWeight;
     }
 
@@ -3521,11 +3521,12 @@ public class InventoryItem extends GameEntity {
         for (int i = 0; i < this.extraItems.size(); i++) {
             InventoryItem item = InventoryItemFactory.CreateItem(this.extraItems.get(i));
             if (item != null && item.getActualWeight() > 0.0F) {
-                extraWeight += item.getActualWeight();
+                float iw = (item.getActualWeight() / splitCount) * 0.6F;
+                extraWeight += iw;
             }
         }
 
-        return extraWeight * 0.6F;
+        return extraWeight;
     }
 
     public boolean isCustomName() {
@@ -5719,5 +5720,13 @@ public class InventoryItem extends GameEntity {
 
     public String getGunTypeString() {
         return this.gunTypeDisplayName.toString().replaceAll("\\[", "").replaceAll("\\]", "");
+    }
+
+    public void setSplitCount(int splitCount) {
+        this.splitCount = splitCount;
+    }
+
+    public int getSplitCount() {
+        return this.splitCount;
     }
 }

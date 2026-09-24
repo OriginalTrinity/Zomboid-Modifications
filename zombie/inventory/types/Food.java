@@ -2675,7 +2675,8 @@ public final class Food extends InventoryItem {
         this.copyFoodFromSplit(otherFood, 1);
     }
 
-    public void copyExtraItems(Food otherFood) {
+    public void copyExtraItemsFromSplit(Food otherFood, int split) {
+        this.setSplitCount(split);
         if (otherFood.haveExtraItems()) {
             for (String extraItem : otherFood.getExtraItems()) {
                 this.addExtraItem(extraItem);
@@ -2694,7 +2695,7 @@ public final class Food extends InventoryItem {
         this.copyTemperatureFrom(otherFood);
         this.copyPoisonFrom(otherFood);
         this.copyAgeFrom(otherFood);
-        this.copyExtraItems(otherFood);
+        this.copyExtraItemsFromSplit(otherFood, split);
     }
 
     public void consumeHunger(float realUsedHunger) {

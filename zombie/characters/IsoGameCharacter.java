@@ -11836,23 +11836,23 @@ public abstract class IsoGameCharacter
             }
 
             if (((HandWeapon)this.getPrimaryHandItem()).isOfWeaponCategory(WeaponCategory.SPEAR)) {
-                level += this.getPerkLevel(PerkFactory.Perks.Spear);
+                level = this.getPerkLevel(PerkFactory.Perks.Spear);
             }
 
             if (((HandWeapon)this.getPrimaryHandItem()).isOfWeaponCategory(WeaponCategory.SMALL_BLADE)) {
-                level += this.getPerkLevel(PerkFactory.Perks.SmallBlade);
+                level = this.getPerkLevel(PerkFactory.Perks.SmallBlade);
             }
 
             if (((HandWeapon)this.getPrimaryHandItem()).isOfWeaponCategory(WeaponCategory.LONG_BLADE)) {
-                level += this.getPerkLevel(PerkFactory.Perks.LongBlade);
+                level = this.getPerkLevel(PerkFactory.Perks.LongBlade);
             }
 
             if (((HandWeapon)this.getPrimaryHandItem()).isOfWeaponCategory(WeaponCategory.BLUNT)) {
-                level += this.getPerkLevel(PerkFactory.Perks.Blunt);
+                level = this.getPerkLevel(PerkFactory.Perks.Blunt);
             }
 
             if (((HandWeapon)this.getPrimaryHandItem()).isOfWeaponCategory(WeaponCategory.SMALL_BLUNT)) {
-                level += this.getPerkLevel(PerkFactory.Perks.SmallBlunt);
+                level = this.getPerkLevel(PerkFactory.Perks.SmallBlunt);
             }
         }
 
