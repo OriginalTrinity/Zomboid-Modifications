@@ -1,0 +1,40 @@
+# Ignore everything by default - only our own files and the vanilla files we modified are tracked
+/*
+!/.gitignore
+/zombie/**
+!/zombie/**/
+
+# --- New files ---
+!/zombie/iso/IsoThermalRoom.java
+!/zombie/iso/weather/RoomTemperatureManager.java
+!/zombie/iso/weather/dbg/ThermalForecast.java
+!/zombie/network/packets/RoomThermal*.java
+!/zombie/debug/debugWindows/RoomThermalPanel.java
+!/zombie/debug/debugWindows/RoomBrowserPanel.java
+!/zombie/debug/debugWindows/PersistenceInspectorPanel.java
+!/zombie/debug/debugWindows/ThermalConfigPanel.java
+!/zombie/debug/debugWindows/ThermalForecastPanel.java
+
+# --- Modified vanilla files: thermal simulation ---
+!/zombie/GameWindow.java
+!/zombie/debug/BaseDebugWindow.java
+!/zombie/debug/DebugContext.java
+!/zombie/debug/debugWindows/Viewport.java
+!/zombie/gameStates/IngameState.java
+!/zombie/iso/IsoCell.java
+!/zombie/iso/IsoChunk.java
+!/zombie/iso/IsoGridSquare.java
+!/zombie/iso/IsoWorld.java
+!/zombie/iso/areas/isoregion/IsoRegions.java
+!/zombie/iso/areas/isoregion/IsoRegionWorker.java
+!/zombie/iso/areas/isoregion/metagrid/WorldRegionToMetaGrid.java
+!/zombie/iso/weather/ClimateManager.java
+!/zombie/network/GameServer.java
+!/zombie/network/PacketTypes.java
+!/zombie/network/ServerMap.java
+
+# --- Modified vanilla files: gameplay fixes ---
+!/zombie/inventory/InventoryItem.java
+!/zombie/inventory/types/Food.java
+!/zombie/inventory/types/HandWeapon.java
+!/zombie/characters/IsoGameCharacter.java
