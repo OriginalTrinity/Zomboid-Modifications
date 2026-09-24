@@ -5019,23 +5019,23 @@ public class InventoryItem extends GameEntity {
                 }
 
                 if (weapon.isOfWeaponCategory(WeaponCategory.SPEAR)) {
-                    level += this.getUser().getPerkLevel(PerkFactory.Perks.Spear);
+                    level = this.getUser().getPerkLevel(PerkFactory.Perks.Spear);
                 }
 
                 if (weapon.isOfWeaponCategory(WeaponCategory.SMALL_BLADE)) {
-                    level += this.getUser().getPerkLevel(PerkFactory.Perks.SmallBlade);
+                    level = this.getUser().getPerkLevel(PerkFactory.Perks.SmallBlade);
                 }
 
                 if (weapon.isOfWeaponCategory(WeaponCategory.LONG_BLADE)) {
-                    level += this.getUser().getPerkLevel(PerkFactory.Perks.LongBlade);
+                    level = this.getUser().getPerkLevel(PerkFactory.Perks.LongBlade);
                 }
 
                 if (weapon.isOfWeaponCategory(WeaponCategory.BLUNT)) {
-                    level += this.getUser().getPerkLevel(PerkFactory.Perks.Blunt);
+                    level = this.getUser().getPerkLevel(PerkFactory.Perks.Blunt);
                 }
 
                 if (weapon.isOfWeaponCategory(WeaponCategory.SMALL_BLUNT)) {
-                    level += this.getUser().getPerkLevel(PerkFactory.Perks.SmallBlunt);
+                    level = this.getUser().getPerkLevel(PerkFactory.Perks.SmallBlunt);
                 }
             }
 
