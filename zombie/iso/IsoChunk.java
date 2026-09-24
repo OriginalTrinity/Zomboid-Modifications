@@ -95,6 +95,7 @@ import zombie.iso.objects.IsoTree;
 import zombie.iso.objects.RainManager;
 import zombie.iso.sprite.IsoSprite;
 import zombie.iso.sprite.IsoSpriteManager;
+import zombie.iso.weather.RoomTemperatureManager;
 import zombie.iso.worldgen.ChunksCache;
 import zombie.iso.worldgen.WorldGenChunk;
 import zombie.iso.worldgen.WorldGenUtils;
@@ -991,6 +992,7 @@ public final class IsoChunk {
                         case 2 -> (int)Math.ceil(chance / 10.0F);
                         case 3 -> (int)Math.ceil(chance / 1.5F);
                         case 5 -> 2;
+                        default -> 0;
                     };
                     if (SystemDisabler.doVehiclesEverywhere || DebugOptions.instance.vehicleSpawnEverywhere.getValue() || type.forceSpawn) {
                         chance = 100;
@@ -3290,6 +3292,10 @@ public final class IsoChunk {
         }
 
         this.preventHotSave = false;
+        // Room Temperature Hook
+        if (GameServer.server || !GameClient.client) {
+            RoomTemperatureManager.getInstance().onChunkUnloaded(this);
+        }
     }
 
     private void disconnectFromAdjacentChunks(IsoGridSquare sq) {
@@ -3969,6 +3975,10 @@ public final class IsoChunk {
         frameDelay = (frameDelay + 1) % 5;
         this.preventHotSave = false;
         LuaEventManager.triggerEvent("LoadChunk", this);
+        // Room Temperature Hook
+        if (GameServer.server || !GameClient.client) {
+            RoomTemperatureManager.getInstance().onChunkLoaded(this);
+        }
     }
 
     private void loadGridSquareIfNeeded(IsoGridSquare square) {
@@ -5723,7 +5733,7 @@ public final class IsoChunk {
             }
 
             String str = sb.toString();
-            throw new RuntimeException(str);
+            //throw new RuntimeException(str);
         }
     }
 }

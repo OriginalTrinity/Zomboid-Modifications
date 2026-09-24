@@ -5,6 +5,7 @@ import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.util.GregorianCalendar;
+import java.util.Optional;
 import se.krka.kahlua.vm.KahluaTable;
 import zombie.GameTime;
 import zombie.SandboxOptions;
@@ -34,6 +35,8 @@ import zombie.iso.IsoMetaGrid;
 import zombie.iso.IsoPuddles;
 import zombie.iso.IsoWater;
 import zombie.iso.IsoWorld;
+import zombie.iso.areas.IsoRoom;
+import zombie.iso.areas.isoregion.regions.IsoWorldRegion;
 import zombie.iso.sprite.SkyBox;
 import zombie.iso.weather.dbg.ClimMngrDebug;
 import zombie.iso.weather.fx.IsoWeatherFX;
@@ -188,6 +191,7 @@ public class ClimateManager {
     private ClimateValues climateValuesFronts;
     private static final float[] windAngles = new float[]{22.5F, 67.5F, 112.5F, 157.5F, 202.5F, 247.5F, 292.5F, 337.5F, 382.5F};
     private static final String[] windAngleStr = new String[]{"SE", "S", "SW", "W", "NW", "N", "NE", "E", "SE"};
+    private final RoomTemperatureManager roomTemperatureManager;
 
     public float getMaxWindspeedKph() {
         return 120.0F;
@@ -244,6 +248,7 @@ public class ClimateManager {
         this.weatherPeriod = new WeatherPeriod(this, this.thunderStorm);
         this.climateForecaster = new ClimateForecaster();
         this.climateHistory = new ClimateHistory();
+        this.roomTemperatureManager = new RoomTemperatureManager();
 
         try {
             LuaEventManager.triggerEvent("OnClimateManagerInit", this);
@@ -715,51 +720,43 @@ public class ClimateManager {
         float temp = this.getTemperature();
         if (square != null) {
             boolean isInside = square.isInARoom();
-            if (isInside || vehicle != null) {
-                boolean electricity = IsoWorld.instance.isHydroPowerOn();
+            if (isInside) {
+                IsoRoom room = RoomTemperatureManager.getMappedRoom(square);
+                if (room != null) {
+                    temp = this.roomTemperatureManager.getSimulatedTemperature(room);
+                } else if (square.getIsoWorldRegion() instanceof IsoWorldRegion) {
+                    temp = this.roomTemperatureManager.getSimulatedTemperature(square);
+                }
+            } else if (vehicle != null) {
                 if (temp <= 22.0F) {
-                    if (isInside && electricity) {
-                        temp = 22.0F;
-                    }
-
                     float mod = 22.0F - temp;
                     if (square.getZ() < 1) {
                         temp += mod * (0.4F + 0.2F * this.dayLightLagged);
                     } else {
-                        mod = (float)(mod * 0.85);
+                        mod = (float) (mod * 0.85F);
                         temp += mod * (0.4F + 0.2F * this.dayLightLagged);
                     }
                 } else {
-                    if (isInside && electricity) {
-                        temp = 22.0F;
-                    }
-
                     float mod = temp - 22.0F;
                     if (square.getZ() < 1) {
-                        mod = (float)(mod * 0.85);
+                        mod = (float) (mod * 0.85F);
                         temp -= mod * (0.4F + 0.2F * this.dayLightLagged);
                     } else {
                         temp -= mod * (0.4F + 0.2F * this.dayLightLagged + 0.2F * this.nightLagged);
                     }
-
-                    if (!isInside && vehicle != null) {
-                        temp = temp + mod + mod * this.dayLightLagged;
-                    }
+                    temp = temp + mod + mod * this.dayLightLagged;
                 }
             } else if (doWindChill) {
                 temp = Temperature.WindchillCelsiusKph(temp, this.getWindspeedKph());
             }
 
-            float heatsourceTemp = IsoWorld.instance.getCell().getHeatSourceHighestTemperature(temp, square.getX(), square.getY(), square.getZ());
-            if (heatsourceTemp > temp) {
-                temp = heatsourceTemp;
-            }
+            temp = this.roomTemperatureManager.applyHeatSourceProximity(temp, square);
 
             if (vehicle != null) {
                 if (!isInside) {
                     temp += vehicle.getInsideTemperature();
                 } else {
-                    temp += vehicle.getInsideTemperature() > 0.0F ? vehicle.getInsideTemperature() : 0.0F;
+                    temp += Math.max(vehicle.getInsideTemperature(), 0.0F);
                 }
             }
         }
@@ -912,6 +909,11 @@ public class ClimateManager {
             if (GameServer.server && this.puddlesSyncLimit.Check()) {
                 INetworkPacket.sendToAll(PacketTypes.PacketType.SyncPuddles, IsoPuddles.getInstance());
             }
+        }
+
+        // Room Temperature Hook
+        if (GameServer.server || !GameClient.client) {
+            this.roomTemperatureManager.update();
         }
     }
 

@@ -226,6 +226,9 @@ public final class WorldRegionToMetaGrid {
         for (int i = metaCell.buildings.size() - 1; i >= 0; i--) {
             BuildingDef buildingDef = metaCell.buildings.get(i);
             if (buildingDef.isUserDefined()) {
+                // Region -> building links don't survive DataRoot swaps, so mark the building's own footprint dirty;
+                // otherwise squares of a building that isn't recreated keep pointing at the removed IsoRoom (def == null)
+                this.markBuildingChunksDirty(buildingDef);
                 this.removeFromMetaGrid(buildingDef);
                 this.discardBuilding(buildingDef, true);
                 removed++;
@@ -233,6 +236,26 @@ public final class WorldRegionToMetaGrid {
         }
 
         return removed;
+    }
+
+    private void markBuildingChunksDirty(BuildingDef buildingDef) {
+        this.markRoomChunksDirty(buildingDef.getRooms());
+        this.markRoomChunksDirty(buildingDef.getEmptyOutside());
+    }
+
+    private void markRoomChunksDirty(ArrayList<RoomDef> rooms) {
+        for (RoomDef room : rooms) {
+            for (RoomDef.RoomRect rect : room.getRects()) {
+                for (int cx = Math.floorDiv(rect.getX(), 8); cx <= Math.floorDiv(rect.getX2() - 1, 8); cx++) {
+                    for (int cy = Math.floorDiv(rect.getY(), 8); cy <= Math.floorDiv(rect.getY2() - 1, 8); cy++) {
+                        tempLocation.set(cx, cy, 0);
+                        if (!this.dirtyChunks.contains(tempLocation)) {
+                            this.dirtyChunks.add(new IsoGameCharacter.Location(cx, cy, 0));
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private BuildingDef regionToBuildingDef(IsoWorldRegion worldRegion, HashSet<IsoWorldRegion> done, HashSet<BuildingDef> added) {

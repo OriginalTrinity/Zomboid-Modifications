@@ -165,6 +165,7 @@ import zombie.iso.objects.RainManager;
 import zombie.iso.sprite.IsoSprite;
 import zombie.iso.sprite.IsoSpriteManager;
 import zombie.iso.weather.ClimateManager;
+import zombie.iso.weather.RoomTemperatureManager;
 import zombie.iso.worldgen.WorldGenUtils;
 import zombie.iso.zones.Zone;
 import zombie.network.anticheats.AntiCheat;
@@ -2614,21 +2615,24 @@ public class GameServer {
             ChatServer.getInstance().disconnectPlayer(player.getOnlineID());
             if (player.getVehicle() != null) {
                 VehiclesDB2.instance.updateVehicleAndTrailer(player.getVehicle());
-                if (player.getVehicle().isDriver(player) && player.getVehicle().isNetPlayerId(player.getOnlineID())) {
+                if (player.getVehicle().isNetPlayerId(player.getOnlineID())) {
                     player.getVehicle().setNetPlayerAuthorization(BaseVehicle.Authorization.Server, -1);
-                    if (player.getVehicle().getController() != null) {
-                        player.getVehicle().getController().clientForce = 0.0F;
+                    if (player.getVehicle().isDriver(player)) {
+                        if (player.getVehicle().getController() != null) {
+                            player.getVehicle().getController().clientForce = 0.0F;
+                        }
+
+                        player.getVehicle().jniLinearVelocity.set(0.0F, 0.0F, 0.0F);
                     }
 
-                    player.getVehicle().jniLinearVelocity.set(0.0F, 0.0F, 0.0F);
-                }
-
-                int seat = player.getVehicle().getSeat(player);
-                if (seat != -1) {
-                    player.getVehicle().clearPassenger(seat);
+                    int seat = player.getVehicle().getSeat(player);
+                    if (seat != -1) {
+                        player.getVehicle().clearPassenger(seat);
+                    }
                 }
             }
 
+            RoomTemperatureManager.getInstance().removePlayerFromCache(player);
             NetworkZombieManager.getInstance().clearTargetAuth(connection, player);
             player.removeFromWorld();
             player.removeFromSquare();

@@ -58,6 +58,11 @@ public final class IsoRegionWorker {
     private final List<RegionJob> jobBatchedProcessing = new ArrayList<>();
     private final ConcurrentLinkedQueue<RegionJob> finishedJobQueue = new ConcurrentLinkedQueue<>();
     private static final ByteBuffer byteBuffer = ByteBuffer.allocate(2076);
+    /**
+     * Square changes contained in the batch currently being swapped in. Written by the worker before it sets
+     * isRequestingBufferSwap and read by the main thread after seeing it, while the worker blocks on the swap.
+     */
+    private final ArrayList<int[]> swapSquareChanges = new ArrayList<>();
 
     protected IsoRegionWorker() {
         instance = this;
@@ -235,6 +240,11 @@ public final class IsoRegionWorker {
                     case ApplyChanges:
                         this.rootBuffer.processDirtyChunks();
                         if (cycle == 0) {
+                            for (RegionJob batched : this.jobBatchedProcessing) {
+                                if (batched instanceof JobSquareUpdate squareJob) {
+                                    this.swapSquareChanges.add(new int[]{squareJob.getWorldSquareX(), squareJob.getWorldSquareY(), squareJob.getWorldSquareZ()});
+                                }
+                            }
                             isRequestingBufferSwap.set(true);
 
                             while (isRequestingBufferSwap.get()) {
@@ -299,6 +309,13 @@ public final class IsoRegionWorker {
 
     protected DataRoot getRootBuffer() {
         return this.rootBuffer;
+    }
+
+    /** Main thread only, during the swap: returns and clears the square changes of the batch being swapped in. */
+    protected List<int[]> takeSwapSquareChanges() {
+        List<int[]> changes = new ArrayList<>(this.swapSquareChanges);
+        this.swapSquareChanges.clear();
+        return changes;
     }
 
     protected void setRootBuffer(DataRoot root) {

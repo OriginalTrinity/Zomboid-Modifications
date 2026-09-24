@@ -1,6 +1,7 @@
 # Ignore everything by default - only our own files and the vanilla files we modified are tracked
 /*
 !/.gitignore
+!/zombie/
 /zombie/**
 !/zombie/**/
 

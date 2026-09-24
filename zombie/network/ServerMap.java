@@ -41,6 +41,7 @@ import zombie.iso.RoomDef;
 import zombie.iso.Vector2;
 import zombie.iso.Vector3;
 import zombie.iso.WorldGenerate;
+import zombie.iso.weather.RoomTemperatureManager;
 import zombie.iso.worldgen.WorldGenParams;
 import zombie.network.id.ObjectIDManager;
 import zombie.network.packets.INetworkPacket;
@@ -88,7 +89,13 @@ public class ServerMap {
     long lastTick;
 
     public short getUniqueZombieId() {
-        return this.zombieMap.allocateID();
+        //return this.zombieMap.allocateID();
+        for (int attempts = 0; attempts < 32767; attempts++) {
+            short id = this.zombieMap.allocateID();
+            if (this.zombieMap.get(id) == null) return id;
+        }
+
+        throw new IllegalStateException("Failed to allocated unique zombie ID");
     }
 
     public void SaveAll() {
@@ -141,6 +148,8 @@ public class ServerMap {
                 this.checkClientPause();
             }
         }
+
+        RoomTemperatureManager.getInstance().saveAll();
 
         this.grid.save();
         DebugLog.log("SaveAll took " + (System.nanoTime() - start) / 1000000.0 + " ms");

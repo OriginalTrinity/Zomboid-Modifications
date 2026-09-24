@@ -27,6 +27,7 @@ import zombie.iso.areas.isoregion.data.DataSquarePos;
 import zombie.iso.areas.isoregion.regions.IChunkRegion;
 import zombie.iso.areas.isoregion.regions.IWorldRegion;
 import zombie.iso.areas.isoregion.regions.IsoWorldRegion;
+import zombie.iso.weather.RoomTemperatureManager;
 import zombie.network.GameClient;
 import zombie.network.GameServer;
 
@@ -212,10 +213,16 @@ public final class IsoRegions {
             DataRoot root = dataRoot;
             dataRoot = regionWorker.getRootBuffer();
             regionWorker.setRootBuffer(root);
+            List<int[]> squareChanges = regionWorker.takeSwapSquareChanges();
             IsoRegionWorker.isRequestingBufferSwap.set(false);
             if (!GameServer.server) {
                 clientResetCachedRegionReferences();
                 dataRoot.clientProcessBuildings();
+            }
+
+            // After clientResetCachedRegionReferences, so squares no longer hand out the previous DataRoot's regions
+            if (RoomTemperatureManager.getInstance() != null) {
+                RoomTemperatureManager.getInstance().onRegionsRebuilt(squareChanges);
             }
         }
 

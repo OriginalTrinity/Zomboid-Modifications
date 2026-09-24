@@ -127,6 +127,7 @@ import zombie.iso.sprite.IsoSpriteManager;
 import zombie.iso.sprite.SkyBox;
 import zombie.iso.sprite.SpriteGridParseData;
 import zombie.iso.weather.ClimateManager;
+import zombie.iso.weather.RoomTemperatureManager;
 import zombie.iso.weather.WorldFlares;
 import zombie.iso.weather.fog.ImprovedFog;
 import zombie.iso.weather.fx.IsoWeatherFX;
@@ -2072,10 +2073,10 @@ public final class IsoWorld {
             DebugType.General.println("ItemConfigurator.Preprocess() start");
             ItemConfigurator.Preprocess();
             DebugType.General.println("ItemConfigurator.Preprocess() end");
-            boolean isPlayerAlive = (boolean)0;
+            boolean isPlayerAlive = false;
             if (GameClient.client) {
                 if (ClientPlayerDB.getInstance().clientLoadNetworkPlayer() && ClientPlayerDB.getInstance().isAliveMainNetworkPlayer()) {
-                    isPlayerAlive = (boolean)1;
+                    isPlayerAlive = true;
                 }
             } else {
                 isPlayerAlive = PlayerDBHelper.isPlayerAlive(ZomboidFileSystem.instance.getCurrentSaveDir(), 1);
@@ -2091,7 +2092,7 @@ public final class IsoWorld {
 
             boolean bLoadCharacter;
             if (isPlayerAlive) {
-                bLoadCharacter = (boolean)1;
+                bLoadCharacter = true;
                 if (!this.LoadPlayerForInfo()) {
                     return;
                 }
@@ -2099,7 +2100,7 @@ public final class IsoWorld {
                 worldX = IsoChunkMap.SWorldX[IsoPlayer.getPlayerIndex()];
                 worldY = IsoChunkMap.SWorldY[IsoPlayer.getPlayerIndex()];
             } else {
-                bLoadCharacter = (boolean)0;
+                bLoadCharacter = false;
                 if (GameClient.client && !ServerOptions.instance.spawnPoint.getValue().isEmpty()) {
                     String[] spawnPoint = ServerOptions.instance.spawnPoint.getValue().split(",");
                     if (spawnPoint.length == 3) {
@@ -2406,12 +2407,12 @@ public final class IsoWorld {
             ReanimatedPlayers.instance.loadReanimatedPlayers();
             if (IsoPlayer.getInstance() != null) {
                 if (GameClient.client) {
-                    isPlayerAlive = (boolean)PZMath.fastfloor(IsoPlayer.getInstance().getX());
-                    bLoadCharacter = (boolean)PZMath.fastfloor(IsoPlayer.getInstance().getY());
+                    int x = PZMath.fastfloor(IsoPlayer.getInstance().getX());
+                    int y = PZMath.fastfloor(IsoPlayer.getInstance().getY());
                     int z = PZMath.fastfloor(IsoPlayer.getInstance().getZ());
 
                     while (z > 0) {
-                        IsoGridSquare sq = this.currentCell.getGridSquare(isPlayerAlive, bLoadCharacter, PZMath.fastfloor(z));
+                        IsoGridSquare sq = this.currentCell.getGridSquare(x, y, z);
                         if (sq != null && sq.TreatAsSolidFloor()) {
                             break;
                         }
@@ -2446,6 +2447,11 @@ public final class IsoWorld {
                 throw new WorldDictionaryException(
                     "World loading could not proceed, there are script load errors. (Actual error may be printed earlier in log)"
                 );
+            }
+            if (GameServer.server || !GameClient.client) {
+                DebugType.General.println("RoomTemperatureManager.loadPersistentThermalData() start");
+                RoomTemperatureManager.getInstance().loadPersistentThermalData();
+                DebugType.General.println("RoomTemperatureManager.loadPersistentThermalData() end");
             }
         }
     }

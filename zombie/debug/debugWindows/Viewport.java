@@ -2,12 +2,18 @@
 package zombie.debug.debugWindows;
 
 import imgui.ImGui;
+import imgui.type.ImBoolean;
 import zombie.core.Core;
 import zombie.debug.BaseDebugWindow;
 import zombie.debug.DebugContext;
 import zombie.input.Mouse;
 
 public class Viewport extends BaseDebugWindow {
+    public Viewport() {
+        this.open = new ImBoolean(true);
+        this.wasWindowOpened = true;
+    }
+
     private float viewWidth;
     private float viewHeight;
     private float highlightX1;

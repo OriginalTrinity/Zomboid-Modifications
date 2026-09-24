@@ -9,24 +9,7 @@ import zombie.core.Core;
 import zombie.core.opengl.RenderThread;
 import zombie.core.textures.Texture;
 import zombie.core.textures.TextureFBO;
-import zombie.debug.debugWindows.AchievementPanel;
-import zombie.debug.debugWindows.AimPlotter;
-import zombie.debug.debugWindows.BallisticsTargetPanel;
-import zombie.debug.debugWindows.CombatManagerEditor;
-import zombie.debug.debugWindows.Console;
-import zombie.debug.debugWindows.FirearmPanel;
-import zombie.debug.debugWindows.JavaInspector;
-import zombie.debug.debugWindows.LuaPanel;
-import zombie.debug.debugWindows.PhysicsHitReactionsPanel;
-import zombie.debug.debugWindows.RagdollDebugWindow;
-import zombie.debug.debugWindows.RangeWeaponPanel;
-import zombie.debug.debugWindows.RegistriesViewer;
-import zombie.debug.debugWindows.ScenePanel;
-import zombie.debug.debugWindows.StatisticsPanel;
-import zombie.debug.debugWindows.TargetHitInfoPanel;
-import zombie.debug.debugWindows.TracerEffectsDebugWindow;
-import zombie.debug.debugWindows.UIPanel;
-import zombie.debug.debugWindows.Viewport;
+import zombie.debug.debugWindows.*;
 
 public class DebugContext {
     public static final float FLT_MIN = Float.MIN_NORMAL;
@@ -74,6 +57,10 @@ public class DebugContext {
             this.windows.add(new AchievementPanel());
             this.windows.add(new RegistriesViewer());
             this.windows.add(new CombatManagerEditor());
+            this.windows.add(new RoomThermalPanel());
+            this.windows.add(new RoomBrowserPanel());
+            this.windows.add(new PersistenceInspectorPanel());
+            this.windows.add(new ThermalConfigPanel());
             if (Core.isUseGameViewport()) {
                 this.viewport = new Viewport();
                 this.windows.add(this.viewport);

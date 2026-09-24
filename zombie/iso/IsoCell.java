@@ -4581,6 +4581,10 @@ public final class IsoCell {
         this.heatSources.remove(heatSource);
     }
 
+    public ArrayList<IsoHeatSource> getHeatSources() {
+        return this.heatSources;
+    }
+
     public void updateHeatSources() {
         if (!GameServer.server) {
             for (int i = this.heatSources.size() - 1; i >= 0; i--) {

@@ -144,6 +144,7 @@ import zombie.iso.sprite.IsoSprite;
 import zombie.iso.sprite.SkyBox;
 import zombie.iso.weather.ClimateManager;
 import zombie.iso.weather.ClimateMoon;
+import zombie.iso.weather.RoomTemperatureManager;
 import zombie.iso.weather.Temperature;
 import zombie.iso.weather.fx.WeatherFxMask;
 import zombie.meta.Meta;
@@ -888,6 +889,11 @@ public final class IngameState extends GameState {
                 }
             }
         }
+
+        if (!GameClient.client) {
+            RoomTemperatureManager.getInstance().saveAll();
+        }
+        RoomTemperatureManager.getInstance().reset();
 
         ModelManager.instance.Reset();
         IsoPlayer.Reset();

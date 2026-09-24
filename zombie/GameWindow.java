@@ -98,6 +98,7 @@ import zombie.iso.InstanceTracker;
 import zombie.iso.IsoCamera;
 import zombie.iso.IsoObjectPicker;
 import zombie.iso.IsoWorld;
+import zombie.iso.weather.RoomTemperatureManager;
 import zombie.iso.LightingJNI;
 import zombie.iso.LightingThread;
 import zombie.iso.MetaTracker;
@@ -796,6 +797,14 @@ public final class GameWindow {
             }
 
             try {
+                if (IsoWorld.instance.currentCell != null && RoomTemperatureManager.getInstance() != null) {
+                    RoomTemperatureManager.getInstance().saveAll();
+                }
+            } catch (Exception ex) {
+                DebugType.General.printException(ex, LogSeverity.Error);
+            }
+
+            try {
                 if (IsoWorld.instance.currentCell != null) {
                     LuaEventManager.triggerEvent("OnPostSave");
                 }
@@ -1087,6 +1096,7 @@ public final class GameWindow {
                             GameEntityManager.Save();
                             if (!GameClient.client && !GameServer.server) {
                                 VirtualVehicleManager.getInstance().save();
+                                if (RoomTemperatureManager.getInstance() != null) RoomTemperatureManager.getInstance().saveAll();
                             }
                         } catch (IOException ex) {
                             throw new RuntimeException(ex);

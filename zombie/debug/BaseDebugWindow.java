@@ -13,8 +13,8 @@ public class BaseDebugWindow {
     protected float width;
     protected float height;
     protected ImVec2 contentMin;
-    protected ImBoolean open = new ImBoolean(true);
-    protected boolean wasWindowOpened = true;
+    protected ImBoolean open = new ImBoolean(false);
+    protected boolean wasWindowOpened = false;
     protected boolean wasWindowDocked;
 
     public String getTitle() {
