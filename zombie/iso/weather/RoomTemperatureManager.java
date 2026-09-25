@@ -1,5 +1,6 @@
 package zombie.iso.weather;
 
+import org.apache.commons.lang3.tuple.Pair;
 import org.apache.commons.lang3.tuple.Triple;
 import zombie.GameTime;
 import zombie.GameWindow;
@@ -53,6 +54,7 @@ public class RoomTemperatureManager {
     private final Set<Long> rescanInProgress;
     private final RoomTileScanWorker tileScanWorker;
     private final Set<Long> pendingPlayerRoomChunks;
+    private final HashMap<Long, Pair<Float, Double>> unloadedTemperatureCache;
 
     private double lastApplyWorldHours = -1;
     private double lastCalculateWorldHours = -1;
@@ -70,9 +72,10 @@ public class RoomTemperatureManager {
         this.pendingRescanRooms = ConcurrentHashMap.newKeySet();
         this.pendingSquareChanges = new ConcurrentLinkedQueue<>();
         this.rescanInProgress = ConcurrentHashMap.newKeySet();
+        this.pendingPlayerRoomChunks = new HashSet<>();
+        this.unloadedTemperatureCache = new HashMap<>();
         this.tileScanWorker = new RoomTileScanWorker();
         this.tileScanWorker.start();
-        this.pendingPlayerRoomChunks = new HashSet<>();
         ThermalConfig.load();
         instance = this;
     }
@@ -746,6 +749,7 @@ public class RoomTemperatureManager {
         this.lastCalculateWorldHours = -1;
         this.lastCleanUpMillis = -1;
         this.tileScanWorker.stop();
+        this.unloadedTemperatureCache.clear();
     }
 
     public static IsoRoom getMappedRoom(IsoGridSquare sq) {
@@ -778,6 +782,65 @@ public class RoomTemperatureManager {
     public static float getCurrentSunStrength() {
         ClimateManager climateManager = ClimateManager.getInstance();
         return climateManager.getDayLightStrength() * (1.0f - climateManager.getCloudIntensity());
+    }
+
+    public float getLastKnownTemperatureAt(float fx, float fy, float fz) {
+        int x = PZMath.fastfloor(fx), y = PZMath.fastfloor(fy), z = PZMath.fastfloor(fz);
+        long key = IsoThermalRoom.packCoordinates(x, y, z);
+        double now = GameTime.getInstance().getWorldAgeHours();
+        Pair<Float, Double> cached = this.unloadedTemperatureCache.get(key);
+        if (cached != null && now - cached.getRight() < ThermalConfig.TEMP_CALCULATE_INTERVAL_HOURS) {
+            return cached.getLeft();
+        }
+        float temperature = this.lookupLastKnownTemperature(x, y, z);
+        this.unloadedTemperatureCache.put(key, Pair.of(temperature, now));
+        return temperature;
+    }
+
+    private float lookupLastKnownTemperature(int x, int y, int z) {
+        float outdoor = ClimateManager.getInstance().getTemperature();
+
+        RoomDef def = IsoWorld.instance.getMetaGrid().getRoomAt(x, y, z);
+        if (def != null && !def.isUserDefined()) {
+            Optional<IsoThermalRoom> live = this.getSimulatedRoomById(def.getID());
+            if (live.isPresent()) return live.get().getCurrentTemperature();
+            return this.getPersistentThermalDataFromCoordinates(def.getX(), def.getY(), def.getZ(), false)
+                    .map(PersistentThermalData::lastTemp)
+                    .orElse(outdoor);
+        }
+
+        if (IsoRegions.getIsoWorldRegion(x, y, z) instanceof IsoWorldRegion region && region.isPlayerRoom()) {
+            for (IsoThermalRoom room : this.simulatedRooms) {
+                if (room.isPlayerRoom() && room.containsSquare(x, y, z)) return room.getCurrentTemperature();
+            }
+            int[] corner = findRegionCorner(region);
+            if (corner != null) {
+                return this.getPersistentThermalDataFromCoordinates(corner[0], corner[1], z, true)
+                        .map(PersistentThermalData::lastTemp)
+                        .orElse(outdoor);
+            }
+        }
+
+        return outdoor;
+    }
+
+    private static int[] findRegionCorner(IsoWorldRegion region) {
+        int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE;
+        for (IsoChunkRegion chunkRegion : region.getChunkRegions()) {
+            DataChunk dataChunk = chunkRegion.getDataChunk();
+            int z = chunkRegion.getzLayer();
+            for (int dx = 0; dx < 8; dx++) {
+                for (int dy = 0; dy < 8; dy++) {
+                    int sx = dataChunk.getChunkX() * 8 + dx, sy = dataChunk.getChunkY() * 8 + dy;
+                    if (IsoRegions.getIsoWorldRegion(sx, sy, z) == region) {
+                        minX = Math.min(minX, sx);
+                        minY = Math.min(minY, sy);
+                    }
+                }
+            }
+        }
+
+        return minX == Integer.MAX_VALUE ? null : new int[]{minX, minY};
     }
 
     public record PersistentThermalData(int x, int y, int z, float lastTemp, double lastUpdate, boolean isPlayerRoom) {

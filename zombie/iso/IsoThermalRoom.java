@@ -574,6 +574,10 @@ public class IsoThermalRoom {
         return sq != null && this.squareHashes != null && this.squareHashes.contains(packCoordinates(sq.getX(), sq.getY(), sq.getZ()));
     }
 
+    public boolean containsSquare(int x, int y, int z) {
+        return this.squareHashes != null && this.squareHashes.contains(packCoordinates(x, y, z));
+    }
+
     public long getId() {
         return this.id;
     }

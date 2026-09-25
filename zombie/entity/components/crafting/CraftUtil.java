@@ -23,6 +23,7 @@ import zombie.entity.energy.Energy;
 import zombie.inventory.InventoryItem;
 import zombie.iso.IsoGridSquare;
 import zombie.iso.weather.ClimateManager;
+import zombie.iso.weather.RoomTemperatureManager;
 import zombie.scripting.entity.components.crafting.CraftRecipe;
 import zombie.scripting.objects.Item;
 
@@ -337,7 +338,9 @@ public class CraftUtil {
     public static float getEntityTemperature(GameEntity entity) {
         float ambientTemp = ClimateManager.getInstance().getTemperature();
         if (entity instanceof MetaEntity) {
-            return ambientTemp;
+            RoomTemperatureManager manager = RoomTemperatureManager.getInstance();
+            if (entity.isOutside() || manager == null) return ambientTemp;
+            return manager.getLastKnownTemperatureAt(entity.getX(), entity.getY(), entity.getZ());
         }
 
         IsoGridSquare square = entity.getSquare();
