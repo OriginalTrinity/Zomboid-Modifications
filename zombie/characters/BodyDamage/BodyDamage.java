@@ -1663,7 +1663,8 @@ public final class BodyDamage {
 
     public float getApparentInfectionLevel() {
         float infectionLevel = Math.max(this.stats.get(CharacterStat.ZOMBIE_FEVER), this.stats.get(CharacterStat.ZOMBIE_INFECTION));
-        return Math.max(this.stats.get(CharacterStat.FOOD_SICKNESS), infectionLevel);
+        float sicknessLevel = Math.max(this.stats.get(CharacterStat.FOOD_SICKNESS), this.getGeneralWoundInfectionLevel());
+        return Math.max(sicknessLevel, infectionLevel);
     }
 
     public int getNumPartsBleeding() {

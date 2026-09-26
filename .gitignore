@@ -42,3 +42,4 @@
 !/zombie/inventory/types/HandWeapon.java
 !/zombie/characters/IsoGameCharacter.java
 !/zombie/gameStates/MainScreenState.java
+!/zombie/characters/BodyDamage/BodyDamage.java
