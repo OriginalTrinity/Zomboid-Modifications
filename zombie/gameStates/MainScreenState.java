@@ -98,6 +98,7 @@ import zombie.modding.ActiveMods;
 import zombie.network.CustomizationManager;
 import zombie.network.GameClient;
 import zombie.network.statistics.StatisticManager;
+import zombie.patchupdater.PatchUpdater;
 import zombie.ui.ScreenFader;
 import zombie.ui.TextManager;
 import zombie.ui.UIFont;
@@ -370,6 +371,9 @@ public final class MainScreenState extends GameState {
         } catch (Throwable var5) {
         }
 
+        // PatchUpdater hook
+        PatchUpdater.start();
+
         GameClient.client = false;
         this.elements.clear();
         this.targetAlpha = 1.0F;
@@ -458,6 +462,8 @@ public final class MainScreenState extends GameState {
         IndieGL.glBlendFunc(770, 770);
         this.renderBackground();
         UIManager.render();
+        // PatchUpdater hook
+        PatchUpdater.renderMainMenuNotice();
         if (GameWindow.drawReloadingLua) {
             int textWidth = TextManager.instance.MeasureStringX(UIFont.Small, "Reloading Lua") + 32;
             int fontHeight = TextManager.instance.font.getLineHeight();
