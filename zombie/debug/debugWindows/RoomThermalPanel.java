@@ -429,7 +429,7 @@ public class RoomThermalPanel extends PZDebugWindow {
     }
 
     static void highlightRoomBounds(IsoThermalRoom room) {
-        highlightRoomBounds(room, 1.0f, 1.0f, 1.0f, 0.25f);
+        highlightRoomBounds(room, 1.0f, 1.0f, 1.0f, 0.1f);
     }
 
     private static String roomLabel(IsoThermalRoom room) {
