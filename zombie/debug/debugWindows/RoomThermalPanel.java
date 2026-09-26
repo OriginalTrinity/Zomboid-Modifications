@@ -13,6 +13,7 @@ import imgui.extension.implot.flag.ImPlotStyleVar;
 import imgui.flag.ImGuiInputTextFlags;
 import imgui.flag.ImGuiTableFlags;
 import imgui.type.ImFloat;
+import org.jetbrains.annotations.Nullable;
 import zombie.characters.IsoPlayer;
 import zombie.debug.DebugContext;
 import zombie.debug.DebugType;
@@ -20,31 +21,21 @@ import zombie.iso.*;
 import zombie.iso.SpriteDetails.IsoFlagType;
 import zombie.iso.fboRenderChunk.FBORenderAreaHighlights;
 import zombie.iso.objects.IsoBarbecue;
-import zombie.iso.objects.IsoBarricade;
-import zombie.iso.objects.IsoDoor;
 import zombie.iso.objects.IsoFire;
 import zombie.iso.objects.IsoFireplace;
-import zombie.iso.objects.IsoThumpable;
-import zombie.iso.objects.IsoWindow;
-import zombie.iso.objects.interfaces.BarricadeAble;
-import zombie.iso.weather.ClimateManager;
 import zombie.iso.weather.RoomTemperatureManager;
+import zombie.network.packets.RoomThermalDebugPacket;
 import zombie.ui.TextManager;
 import zombie.ui.UIFont;
 
 import java.text.DecimalFormat;
 import java.text.DecimalFormatSymbols;
-import java.util.ArrayDeque;
-import java.util.Arrays;
-import java.util.Deque;
-import java.util.List;
-import java.util.Locale;
-import java.util.Optional;
+import java.util.*;
 
 public class RoomThermalPanel extends PZDebugWindow {
 
     private static final int TABLE_FLAGS = ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.Resizable;
-    private static final String[] CONTRIBUTION_LABELS = {"Base", "Windows", "Openings", "Stairs", "Heatsources", "Ground"};
+    private static final String[] CONTRIBUTION_LABELS = {"Base", "Windows", "Openings", "Stairs", "Heatsources", "Ground", "Climate Control"};
     private static final float[][] CONTRIBUTION_COLORS = {
             {1.0f, 1.0f, 1.0f}, // Base - white, matches room bounds fill
             {0.2f, 0.9f, 0.9f}, // Windows - cyan
@@ -52,6 +43,7 @@ public class RoomThermalPanel extends PZDebugWindow {
             {0.8f, 0.2f, 0.8f}, // Stairs - purple
             {1.0f, 0.3f, 0.0f}, // Heatsources - deep orange
             {0.55f, 0.35f, 0.2f}, // Ground - brown
+            {0.3f, 0.5f, 1.0f}, // Climate control - blue
     };
     private static final DecimalFormat CONTRIBUTION_VALUE_FORMAT = new DecimalFormat("0.###", DecimalFormatSymbols.getInstance(Locale.US));
 
@@ -129,65 +121,67 @@ public class RoomThermalPanel extends PZDebugWindow {
     }
 
     private void renderDebugInfo(IsoThermalRoom room) {
-        IsoThermalRoom.DebugInfo debugInfo = room.getDebugInfo();
-        float outsideTemp = ClimateManager.getInstance().getTemperature();
+        IsoThermalRoom.DebugInfo debugInfo = room.enableDebugInfo();
+        debugInfo.requestRefresh();
 
-        ImGui.text("Room ID: " + debugInfo.getId());
-        ImGui.text("Type: " + (debugInfo.isPlayerRoom() ? "Player-built" : "Mapped"));
-        ImGui.text(String.format("Coords: (%d, %d, %d)", debugInfo.getX(), debugInfo.getY(), debugInfo.getZ()));
+        ImGui.text("Room ID: " + room.getId());
+        ImGui.text("Type: " + (room.isPlayerRoom() ? "Player-built" : "Mapped"));
+        ImGui.text(String.format("Coords: (%d, %d, %d)", room.getX(), room.getY(), room.getZ()));
         ImGui.separator();
-        ImGui.text(String.format("Outside Temp: %.2f °C", outsideTemp));
 
-        if (ImGui.treeNode("currentTempNode", String.format("Current Temp: %.2f °C", debugInfo.getCurrentTemp()))) {
+        if (!debugInfo.hasData()) {
+            ImGui.textDisabled("Waiting for server...");
+            return;
+        }
+
+        ImGui.text(String.format("Outside Temp: %.2f °C", debugInfo.getOutsideTemp()));
+
+        if (ImGui.treeNode("currentTempNode", String.format("Current Temp: %.2f °C", room.getCurrentTemperature()))) {
             this.renderTempHistoryGraph(debugInfo.getCurrentTempHistory(), debugInfo.getHistorySize(), debugInfo.getHistoryWriteIndex(), 0.3f, 0.7f, 1.0f);
             ImGui.treePop();
         }
 
-        if (!debugInfo.hasLiveGeometry()) { // hasLiveGeometry
-            ImGui.textDisabled("Network display cache only - target temp/geometry aren't synced to clients.");
-            return;
-        }
-
-        if (ImGui.treeNode("targetTempNode", String.format("Target Temp: %.2f °C", debugInfo.getTargetTemp()))) {
+        if (ImGui.treeNode("targetTempNode", String.format("Target Temp: %.2f °C", room.getTargetTemperature()))) {
             this.renderTempHistoryGraph(debugInfo.getTargetTempHistory(), debugInfo.getHistorySize(), debugInfo.getHistoryWriteIndex(), 1.0f, 0.65f, 0.2f);
             ImGui.treePop();
         }
 
         if (room.getZ() > 0) {
-            ImGui.text(String.format("Z-level influence: -%.2f °C", RoomTemperatureManager.ThermalConfig.UPPER_FLOOR_TEMP_DROP * debugInfo.getZ()));
+            ImGui.text(String.format("Z-level influence: -%.2f °C", debugInfo.getFloorTempDrop()));
         }
         if (room.getZ() < 0) {
-            ImGui.text(String.format("Ground Temp: %.2f °C", RoomTemperatureManager.getInstance().getGroundTemperature()));
-            ImGui.text(String.format("Outdoor multiplier: %.2f", room.getFloorOutdoorMultiplier()));
+            ImGui.text(String.format("Ground Temp: %.2f °C", debugInfo.getGroundTemp()));
+            ImGui.text(String.format("Outdoor multiplier: %.2f", debugInfo.getFloorOutdoorMultiplier()));
         }
         ImGui.text(String.format("Roof exposure: %.0f%% (sun %.2f -> +%.2f °C)",
                 room.getRoofFraction() * 100.0f,
-                RoomTemperatureManager.getCurrentSunStrength(),
-                RoomTemperatureManager.ThermalConfig.SOLAR_ROOF_GAIN * RoomTemperatureManager.getCurrentSunStrength() * room.getRoofFraction()));
+                debugInfo.getSunStrength(),
+                debugInfo.getSolarGain()));
 
         if (ImGui.button("Open 24h Forecast")) {
             if (this.forecastPanel == null) this.forecastPanel = new ThermalForecastPanel(this);
             this.forecastPanel.open();
         }
 
-        ImGui.text("Squares: " + debugInfo.getSquares().size());
+        ImGui.text("Squares: " + debugInfo.getTiles().size());
         ImGui.separator();
-        ImGui.text(String.format("Weight sum: %.4f", debugInfo.getWeightSum()));
+        ImGui.text(String.format("Weight sum: %.4f", room.getWeightSum()));
         if (ImGui.isItemHovered()) {
             this.renderWeightContributionsTooltip(debugInfo);
         }
-        ImGui.text(String.format("Weighted sum: %.4f", debugInfo.getWeightedSum()));
+        ImGui.text(String.format("Weighted sum: %.4f", room.getWeightedSum()));
         ImGui.text(String.format("Temp delta: %.4f", debugInfo.getTempChangeDelta()));
         this.showWorldOverlay = PZImGui.checkbox("Show In-World Overlay", this.showWorldOverlay);
         if (ImGui.isItemHovered()) {
             ImGui.setTooltip("white=room, cyan=window, orange=door, red=breach, purple=stairs, deep orange=heat source");
         }
         if (this.showWorldOverlay) {
-            this.renderWorldOverlay(room, debugInfo);
+            this.renderWorldOverlay(room);
         }
         ImGui.separator();
 
-        ImGui.text("Exterior windows (" + debugInfo.getWindows().size() + ")");
+        List<IsoThermalRoom.DebugInfo.Opening> exteriorWindows = debugInfo.getOpenings().stream().filter(IsoThermalRoom.DebugInfo.Opening::outdoorWindow).toList();
+        ImGui.text("Exterior windows (" + exteriorWindows.size() + ")");
         if (ImGui.beginTable("Windows", 5, TABLE_FLAGS)) {
             ImGui.tableSetupColumn("Square");
             ImGui.tableSetupColumn("State");
@@ -195,24 +189,18 @@ public class RoomThermalPanel extends PZDebugWindow {
             ImGui.tableSetupColumn("# Barricades");
             ImGui.tableSetupColumn("Coefficient");
             ImGui.tableHeadersRow();
-            for (IsoWindow window : debugInfo.getWindows()) {
-                String[] states = this.formatState(window);
-                String windowState = states[0];
-                String curtainState = states[1];
-                String barricadeState = this.getBarricadeState(window);
-                float coefficient = debugInfo.getWindowCoefficient(window);
-
+            for (IsoThermalRoom.DebugInfo.Opening opening : exteriorWindows) {
                 ImGui.tableNextRow();
                 ImGui.tableSetColumnIndex(0);
-                ImGui.text(window.getX() + "," + window.getY());
+                ImGui.text(opening.x() + "," + opening.y());
                 ImGui.tableSetColumnIndex(1);
-                ImGui.text(windowState);
+                ImGui.text(opening.state());
                 ImGui.tableSetColumnIndex(2);
-                ImGui.text(curtainState);
+                ImGui.text(opening.curtains());
                 ImGui.tableSetColumnIndex(3);
-                ImGui.text(barricadeState);
+                ImGui.text(opening.barricades());
                 ImGui.tableSetColumnIndex(4);
-                ImGui.text(String.format("%.3f", coefficient));
+                ImGui.text(String.format("%.3f", opening.coefficient()));
             }
             ImGui.endTable();
         }
@@ -227,45 +215,27 @@ public class RoomThermalPanel extends PZDebugWindow {
             ImGui.tableSetupColumn("Coefficient");
             ImGui.tableSetupColumn("Other temp");
             ImGui.tableHeadersRow();
-            for (IsoThermalRoom.RoomOpening opening : debugInfo.getOpenings()) {
-                boolean isOutdoorWindow = opening.window() != null && opening.neighborRoom() == null && opening.neighborRegion() == null;
-                if (isOutdoorWindow) continue;
-                if ((opening.neighborRoom() != null || opening.neighborRegion() != null) && RoomTemperatureManager.getInstance().resolveNeighborRoom(opening).isEmpty()) {
-                    continue;
-                }
-                float otherTemp;
-                String facing;
-                if (opening.neighborRoom() != null || opening.neighborRegion() != null) {
-                    otherTemp = RoomTemperatureManager.getInstance().resolveNeighborRoom(opening)
-                            .map(IsoThermalRoom::getCurrentTemperature).orElse(outsideTemp);
-                    facing = opening.neighborRoom() != null ? "Room " + opening.neighborRoom().getRoomDef().getID() : "Player region";
-                } else {
-                    otherTemp = outsideTemp;
-                    facing = "Outside";
-                }
-
-                String type = opening.window() != null ? "Window" : (opening.door() != null ? "Door" : "Breach");
-                float coefficient = opening.window() != null ? debugInfo.getWindowCoefficient(opening.window()) : debugInfo.getDoorCoefficient(opening.door());
-
+            for (IsoThermalRoom.DebugInfo.Opening opening : debugInfo.getOpenings()) {
+                if (opening.outdoorWindow() || Float.isNaN(opening.otherTemp())) continue;
                 ImGui.tableNextRow();
                 ImGui.tableSetColumnIndex(0);
-                ImGui.text(opening.square().getX() + "," + opening.square().getY());
+                ImGui.text(opening.x() + "," + opening.y());
                 ImGui.tableSetColumnIndex(1);
-                ImGui.text(type);
+                ImGui.text(opening.type());
                 ImGui.tableSetColumnIndex(2);
-                ImGui.text(this.formatState(opening)[0]);
+                ImGui.text(opening.state());
                 ImGui.tableSetColumnIndex(3);
-                ImGui.text(facing);
+                ImGui.text(opening.facing());
                 ImGui.tableSetColumnIndex(4);
-                ImGui.text(String.format("%.3f", coefficient));
+                ImGui.text(String.format("%.3f", opening.coefficient()));
                 ImGui.tableSetColumnIndex(5);
-                ImGui.text(String.format("%.2f °C", otherTemp));
+                ImGui.text(String.format("%.2f °C", opening.otherTemp()));
             }
             ImGui.endTable();
         }
         ImGui.separator();
 
-        ImGui.text("Stairs (" + debugInfo.getStairLinks().size() + ")");
+        ImGui.text("Stairs (" + debugInfo.getStairs().size() + ")");
         if (ImGui.beginTable("Stairs", 4, TABLE_FLAGS)) {
             ImGui.tableSetupColumn("Bottom square");
             ImGui.tableSetupColumn("Top square");
@@ -273,52 +243,45 @@ public class RoomThermalPanel extends PZDebugWindow {
             ImGui.tableSetupColumn("Other temp");
             ImGui.tableHeadersRow();
 
-            for (IsoThermalRoom.StairLink stairLink : debugInfo.getStairLinks()) {
+            for (IsoThermalRoom.DebugInfo.Stair stair : debugInfo.getStairs()) {
+                boolean resolved = stair.otherRoomId() != -1;
                 ImGui.tableNextRow();
                 ImGui.tableSetColumnIndex(0);
-                ImGui.text(stairLink.bottomLanding().getX() + "," + stairLink.bottomLanding().getY());
+                ImGui.text(stair.bottomX() + "," + stair.bottomY() + "," + stair.bottomZ());
                 ImGui.tableSetColumnIndex(1);
-                ImGui.text(stairLink.topLanding().getX() + "," + stairLink.topLanding().getY());
+                ImGui.text(stair.topX() + "," + stair.topY() + "," + stair.topZ());
                 ImGui.tableSetColumnIndex(2);
-                Optional<IsoThermalRoom> optional = debugInfo.getStairConnectedRoom(stairLink);
-                if (optional.isPresent()) {
-                    ImGui.text("Room " + optional.get().getId());
-                    ImGui.tableSetColumnIndex(3);
-                    ImGui.text(String.format("%.2f °C", optional.get().getCurrentTemperature()));
-                } else {
-                    ImGui.text("?");
-                    ImGui.tableSetColumnIndex(3);
-                    ImGui.text("?");
-                }
+                ImGui.text(resolved ? "Room " + stair.otherRoomId() : "?");
+                ImGui.tableSetColumnIndex(3);
+                ImGui.text(resolved ? String.format("%.2f °C", stair.otherTemp()) : "?");
             }
             ImGui.endTable();
         }
         ImGui.separator();
 
-        List<IsoHeatSource> heatSources = room.getHeatSources();
-        ImGui.text("Heatsources (" + heatSources.size() + ")");
+        ImGui.text("Heatsources (" + debugInfo.getHeatSources().size() + ")");
         if (ImGui.beginTable("HeatSources", 4, TABLE_FLAGS)) {
             ImGui.tableSetupColumn("Square");
             ImGui.tableSetupColumn("Radius");
             ImGui.tableSetupColumn("Temperature");
             ImGui.tableSetupColumn("Coefficient");
             ImGui.tableHeadersRow();
-            for (IsoHeatSource heatSource : heatSources) {
+            for (IsoThermalRoom.DebugInfo.HeatSource heatSource : debugInfo.getHeatSources()) {
                 ImGui.tableNextRow();
                 ImGui.tableSetColumnIndex(0);
-                ImGui.text(heatSource.getX() + "," + heatSource.getY());
+                ImGui.text(heatSource.x() + "," + heatSource.y());
                 ImGui.tableSetColumnIndex(1);
-                ImGui.text(String.valueOf(heatSource.getRadius()));
+                ImGui.text(String.valueOf(heatSource.radius()));
                 ImGui.tableSetColumnIndex(2);
-                ImGui.text(String.format("%d °C", heatSource.getTemperature()));
+                ImGui.text(String.format("%d °C", heatSource.temperature()));
                 ImGui.tableSetColumnIndex(3);
-                ImGui.text(String.format("%.3f", debugInfo.getHeatSourceCoefficient(heatSource)));
+                ImGui.text(String.format("%.3f", heatSource.coefficient()));
             }
             ImGui.endTable();
         }
         ImGui.separator();
         if (ImGui.button("Force Re-scan")) {
-            room.scanPerimeter();
+            debugInfo.runAction(RoomThermalDebugPacket.ACTION_RESCAN, 0f);
         }
         ImGui.sameLine();
         if (ImGui.button("Dump Tile Info")) {
@@ -337,7 +300,7 @@ public class RoomThermalPanel extends PZDebugWindow {
         ImGui.sameLine();
         if (ImGui.beginPopup("room-temp")) {
             if (ImGui.inputFloat("Temperature", roomTempInput, 0, 0,"%.2f", ImGuiInputTextFlags.EnterReturnsTrue)) {
-                room.setCurrentTemperature(roomTempInput.get());
+                debugInfo.runAction(RoomThermalDebugPacket.ACTION_SET_TEMP, roomTempInput.get());
             }
             ImGui.endPopup();
         }
@@ -347,81 +310,81 @@ public class RoomThermalPanel extends PZDebugWindow {
         }
     }
 
-    private void renderWorldOverlay(IsoThermalRoom room, IsoThermalRoom.DebugInfo debugInfo) {
-        highlightRoomBounds(debugInfo);
-        for (IsoThermalRoom.RoomOpening opening : debugInfo.getOpenings()) {
-            IsoGridSquare sq = opening.square();
-            if (opening.window() != null) {
-                this.highlightObject(opening.window(), 0.2f, 0.9f, 0.9f, 0.8f); // window - cyan
-                float[] anchor = this.edgeAnchor(sq, opening.window().getNorth());
-                String[] states = this.formatState(opening);
-                drawWorldLabel(anchor[0], anchor[1], sq.getZ(), 0.5f,
-                        String.format("%.2f (W: %s | C: %s)", debugInfo.getWindowCoefficient(opening.window()), states[0], states[1]));
-            } else if (opening.door() != null) {
-                this.highlightObject(opening.door(), 1.0f, 0.6f, 0.1f, 0.8f); // door - orange
-                boolean north = !(opening.door() instanceof BarricadeAble ba) || ba.getNorth();
-                float[] anchor = this.edgeAnchor(sq, north);
-                drawWorldLabel(anchor[0], anchor[1], sq.getZ(), 0.5f,
-                        String.format("%.2f (%s)", debugInfo.getDoorCoefficient(opening.door()), this.formatState(opening)[0]));
-            } else {
-                // breach - red; highlight whatever sits on the edge (wall frame, railing, empty window frame), else the floor
-                IsoObject edgeObject = this.findEdgeObject(sq, opening.north());
-                if (edgeObject != null) {
-                    this.highlightObject(edgeObject, 1.0f, 0.1f, 0.1f, 0.8f);
-                } else {
-                    this.highlightFloor(sq, 1.0f, 0.1f, 0.1f, 0.8f);
+    private void renderWorldOverlay(IsoThermalRoom room) {
+        highlightRoomBounds(room);
+        IsoCell cell = IsoWorld.instance.getCell();
+        for (IsoThermalRoom.DebugInfo.Opening opening : room.getDebugInfo().getOpenings()) {
+            IsoGridSquare sq = cell.getGridSquare(opening.x(), opening.y(), room.getZ());
+            if (sq == null) continue;
+            float[] anchor = this.edgeAnchor(opening.x(), opening.y(), opening.north());
+            switch (opening.type()) {
+                case "Window" -> {
+                    this.highlightObject(sq.getWindow(opening.north()), 0.2f, 0.9f, 0.9f, 0.8f);
+                    drawWorldLabel(anchor[0], anchor[1], room.getZ(), 0.5f, String.format("%.2f (W: %s | C: %s)", opening.coefficient(), opening.state(), opening.curtains()));
+                }
+                case "Door" -> {
+                    this.highlightObject(sq.getDoor(opening.north()), 1.0f, 0.6f, 0.1f, 0.8f);
+                    drawWorldLabel(anchor[0], anchor[1], room.getZ(), 0.5f, String.format("%.2f (%s)", opening.coefficient(), opening.state()));
+                }
+                default -> {
+                    IsoObject edgeObject = this.findEdgeObject(sq, opening.north());
+                    if (edgeObject != null) {
+                        this.highlightObject(edgeObject, 1.0f, 0.1f, 0.1f, 0.8f);
+                    } else {
+                        this.highlightFloor(sq, 1.0f, 0.1f, 0.1f, 0.8f);
+                    }
                 }
             }
         }
-        for (IsoThermalRoom.StairLink stairLink : debugInfo.getStairLinks()) {
-            this.highlightFloor(stairLink.bottomLanding(), 0.8f, 0.2f, 0.8f, 0.8f); // stairs - purple
-            this.highlightFloor(stairLink.topLanding(), 0.8f, 0.2f, 0.8f, 0.8f);
-            Optional<IsoThermalRoom> otherRoom = debugInfo.getStairConnectedRoom(stairLink);
-            String text = otherRoom.map(isoThermalRoom -> String.format("Room %d:\n%.1f°C", isoThermalRoom.getId(), isoThermalRoom.getCurrentTemperature()))
-                    .orElse("?");
-            IsoGridSquare sq = stairLink.bottomLanding();
-            drawWorldLabel(sq.getX() + 0.5f, sq.getY() + 0.5f, sq.getZ(), 0.3f, text);
+        for (IsoThermalRoom.DebugInfo.Stair stair : room.getDebugInfo().getStairs()) {
+            this.highlightFloor(cell.getGridSquare(stair.bottomX(), stair.bottomY(), stair.bottomZ()), 0.8f, 0.2f, 0.8f, 0.8f);
+            this.highlightFloor(cell.getGridSquare(stair.topX(), stair.topY(), stair.topZ()), 0.8f, 0.2f, 0.8f, 0.8f);
+            String text = stair.otherRoomId() != -1 ? String.format("Room %d:\n%.1f °C", stair.otherRoomId(), stair.otherTemp()) : "?";
+            drawWorldLabel(stair.bottomX() + 0.5f, stair.bottomY() + 0.5f, stair.bottomZ(), 0.3f, text);
         }
-        for (IsoHeatSource heatSource : room.getHeatSources()) {
-            IsoGridSquare sq = IsoWorld.instance.getCell().getGridSquare(heatSource.getX(), heatSource.getY(), heatSource.getZ());
+        for (IsoThermalRoom.DebugInfo.HeatSource heatSource : room.getDebugInfo().getHeatSources()) {
+            IsoGridSquare sq = cell.getGridSquare(heatSource.x(), heatSource.y(), heatSource.z());
             IsoObject sourceObject = this.findHeatSourceObject(sq);
             if (sourceObject != null) {
-                this.highlightObject(sourceObject, 1.0f, 0.3f, 0.0f, 0.8f); // heat source - deep orange
+                this.highlightObject(sourceObject, 1.0f, 0.3f, 0.0f, 0.8f);
             } else {
                 this.highlightFloor(sq, 1.0f, 0.3f, 0.0f, 0.8f);
             }
-            drawWorldLabel(heatSource.getX() + 0.5f, heatSource.getY() + 0.5f, heatSource.getZ(), 0.2f,
-                    String.format("%d°C x%.2f", heatSource.getTemperature(), debugInfo.getHeatSourceCoefficient(heatSource)));
+            drawWorldLabel(heatSource.x() + 0.5f, heatSource.y() + 0.5f, heatSource.z(), 0.2f, String.format("%d °C x%.2f", heatSource.temperature(), heatSource.coefficient()));
         }
     }
 
-    // Windows/doors sit on one edge of the tile (north edge or west edge, per BarricadeAble.getNorth()),
-    // not the tile's center - anchoring there instead of the centroid removes the facing-dependent skew.
-    private float[] edgeAnchor(IsoGridSquare sq, boolean north) {
-        return north
-                ? new float[]{sq.getX() + 0.5f, sq.getY()}
-                : new float[]{sq.getX(), sq.getY() + 0.5f};
+    // Windows/doors sit on one edge of the tile (north edge or west edge), not the tile's center -
+    // anchoring there instead of the centroid removes the facing-dependent skew.
+    private float[] edgeAnchor(int x, int y, boolean north) {
+        return north ? new float[]{x + 0.5f, y} : new float[]{x, y + 0.5f};
     }
 
-    static void highlightRoomBounds(IsoThermalRoom.DebugInfo debugInfo, float r, float g, float b, float a, boolean labels) {
-        List<IsoGridSquare> squares = debugInfo.getSquares();
-        if (squares.isEmpty()) return;
-        int z = debugInfo.getZ();
+    static void highlightRoomBounds(IsoThermalRoom room, float r, float g, float b, float a, boolean labels) {
+        IsoThermalRoom.DebugInfo debugInfo = room.getDebugInfo();
+        if (debugInfo == null) return;
+        highlightRoomBounds(debugInfo.getTiles(), room.getZ(), r, g, b, a, labels ? roomLabel(room) : null);
+    }
+
+    static void highlightRoomBounds(Set<Long> tiles, int z, float r, float g, float b, float a, @Nullable String label) {
+        if (tiles == null || tiles.isEmpty()) return;
         int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE;
         long sumX = 0, sumY = 0;
-        for (IsoGridSquare sq : squares) {
-            minX = Math.min(minX, sq.getX());
-            minY = Math.min(minY, sq.getY());
-            maxX = Math.max(maxX, sq.getX());
-            maxY = Math.max(maxY, sq.getY());
-            sumX += sq.getX();
-            sumY += sq.getY();
+        for (long tile : tiles) {
+            int tileX = IsoThermalRoom.unpackX(tile), tileY = IsoThermalRoom.unpackY(tile);
+            minX = Math.min(minX, tileX);
+            minY = Math.min(minY, tileY);
+            maxX = Math.max(maxX, tileX);
+            maxY = Math.max(maxY, tileY);
+            sumX += tileX;
+            sumY += tileY;
         }
         int width = maxX - minX + 1;
         int height = maxY - minY + 1;
         boolean[][] grid = new boolean[height][width];
-        for (IsoGridSquare sq : squares) {
-            grid[sq.getY() - minY][sq.getX() - minX] = true;
+        for (long tile : tiles) {
+            int tileX = IsoThermalRoom.unpackX(tile), tileY = IsoThermalRoom.unpackY(tile);
+            grid[tileY - minY][tileX - minX] = true;
         }
 
         // Repeatedly carve out the single largest all-room rectangle remaining in the grid
@@ -454,20 +417,23 @@ public class RoomThermalPanel extends PZDebugWindow {
                     .addHighlight(minX + bestColStart, minY + bestRowStart, minX + bestColEnd, minY + bestRowEnd, z, r, g, b, a);
         }
 
-        if (labels) {
-            float centroidX = (float) sumX / squares.size() + 0.5f;
-            float centroidY = (float) sumY / squares.size() + 0.5f;
-            drawWorldLabel(centroidX, centroidY, z, 0.0f,
-                    String.format("Room %d:\n%.2f°C -> %.2f°C", debugInfo.getId(), debugInfo.getCurrentTemp(), debugInfo.getTargetTemp()));
+        if (label != null) {
+            float centroidX = (float) sumX / tiles.size() + 0.5f;
+            float centroidY = (float) sumY / tiles.size() + 0.5f;
+            drawWorldLabel(centroidX, centroidY, z, 0.0f, label);
         }
     }
 
-    static void highlightRoomBounds(IsoThermalRoom.DebugInfo debugInfo, float r, float g, float b, float a) {
-        highlightRoomBounds(debugInfo, r, g, b, a, true);
+    static void highlightRoomBounds(IsoThermalRoom room, float r, float g, float b, float a) {
+        highlightRoomBounds(room, r, g, b, a, true);
     }
 
-    static void highlightRoomBounds(IsoThermalRoom.DebugInfo debugInfo) {
-        highlightRoomBounds(debugInfo, 1.0f, 1.0f, 1.0f, 0.25f);
+    static void highlightRoomBounds(IsoThermalRoom room) {
+        highlightRoomBounds(room, 1.0f, 1.0f, 1.0f, 0.25f);
+    }
+
+    private static String roomLabel(IsoThermalRoom room) {
+        return String.format("Room %d:\n%.2f °C -> %.2f °C", room.getId(), room.getCurrentTemperature(), room.getTargetTemperature());
     }
 
     // Standard "largest rectangle in histogram" stack scan, extended to also return the winning
@@ -561,48 +527,6 @@ public class RoomThermalPanel extends PZDebugWindow {
         DebugType.General.println(builder.toString());
     }
 
-    private String[] formatState(IsoThermalRoom.RoomOpening opening) {
-        String[] states = new String[1];
-        if (opening.window() != null) {
-            states = this.formatState(opening.window());
-        } else if (opening.door() instanceof IsoDoor door) {
-            states[0] = door.isDestroyed() ? "Destroyed" : (door.isOpen() ? "Open" : "Closed");
-        } else if (opening.door() instanceof IsoThumpable thumpable) {
-            states[0] = thumpable.isDestroyed() ? "Destroyed" : (thumpable.open ? "Open" : "Closed");
-        } else {
-            states[0] = "Breached";
-        }
-        return states;
-    }
-
-    private String[] formatState(IsoWindow window) {
-        return new String[]{window.isSmashed() ? "Smashed" : (window.IsOpen() ? "Open" : "Closed"), window.HasCurtains() != null ? (window.HasCurtains().isCurtainOpen() ? "Open" : "Closed") : "None"};
-    }
-
-    private String getBarricadeState(BarricadeAble barricadeAble) {
-        StringBuilder builder = new StringBuilder();
-        for (int i = 0; i < 2; i++) {
-            IsoBarricade barricade;
-            if (i == 0) {
-                barricade = barricadeAble.getBarricadeOnSameSquare();
-            } else {
-                barricade = barricadeAble.getBarricadeOnOppositeSquare();
-            }
-            if (barricade != null) {
-                if (barricade.isMetal()) {
-                    builder.append("Metal Sheet: 1\n");
-                } else if (barricade.isMetalBar()) {
-                    builder.append("Metal Bars: 1\n");
-                } else {
-                    builder.append("Planks: ")
-                            .append(barricade.getNumPlanks())
-                            .append("\n");
-                }
-            }
-        }
-        return builder.toString();
-    }
-
     private void renderTempHistoryGraph(float[] history, int historySize, int writeIndex, float r, float g, float b) {
         if (historySize == 0) {
             ImGui.textDisabled("Not enough data yet.");
@@ -643,7 +567,7 @@ public class RoomThermalPanel extends PZDebugWindow {
     }
 
     private void renderWeightContributionsTooltip(IsoThermalRoom.DebugInfo debugInfo) {
-        Float[] contributions = debugInfo.getWeightContributions();
+        float[] contributions = debugInfo.getWeightContributions();
 
         float maxContribution = 0.001f;
         for (float c : contributions) maxContribution = Math.max(maxContribution, c);

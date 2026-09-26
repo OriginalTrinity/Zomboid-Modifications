@@ -10,7 +10,6 @@ import imgui.extension.implot.flag.ImPlotFlags;
 import imgui.extension.implot.flag.ImPlotLocation;
 import imgui.extension.implot.flag.ImPlotOrientation;
 import imgui.flag.ImGuiCond;
-import zombie.GameTime;
 import zombie.debug.DebugContext;
 import zombie.iso.IsoThermalRoom;
 import zombie.iso.weather.dbg.ThermalForecast;
@@ -20,16 +19,10 @@ import java.util.Optional;
 /** Shows the 24h forecast for whichever room its owning {@link RoomThermalPanel} currently shows. */
 public class ThermalForecastPanel extends PZDebugWindow {
 
-    private static final long REFRESH_MILLIS = 1000;
     private static final float MIN_WIDTH = 350;
     private static final float MIN_HEIGHT = 250;
 
     private final RoomThermalPanel owner;
-    private ThermalForecast.OutdoorCurve outdoorCurve;
-    private double outdoorSampledAt = -1;
-    private ThermalForecast.Result result;
-    private long resultRoomId = -1;
-    private long computedAtMillis;
 
     ThermalForecastPanel(RoomThermalPanel owner) {
         this.owner = owner;
@@ -83,18 +76,18 @@ public class ThermalForecastPanel extends PZDebugWindow {
             return;
         }
         IsoThermalRoom room = optional.get();
-        if (room.getSquares() == null) {
-            ImGui.textDisabled("Network display cache only - no geometry to forecast from.");
+        ThermalForecast.Result result = room.enableDebugInfo().getForecast();
+        if (result == null) {
+            ImGui.textDisabled("Waiting for server...");
             return;
         }
-        this.refresh(room);
 
         ImGui.text(String.format("Room %d at (%d, %d, %d)", room.getId(), room.getX(), room.getY(), room.getZ()));
-        ImGui.text(String.format("Simulating %d connected room%s", this.result.roomCount(), this.result.roomCount() == 1 ? "" : "s"));
+        ImGui.text(String.format("Simulating %d connected room%s", result.roomCount(), result.roomCount() == 1 ? "" : "s"));
         ImGui.separator();
 
-        double minY = this.result.minTemp(), maxY = this.result.maxTemp();
-        for (double outdoor : this.result.outdoorTemps()) {
+        double minY = result.minTemp(), maxY = result.maxTemp();
+        for (double outdoor : result.outdoorTemps()) {
             minY = Math.min(minY, outdoor);
             maxY = Math.max(maxY, outdoor);
         }
@@ -106,36 +99,21 @@ public class ThermalForecastPanel extends PZDebugWindow {
                 ImPlotFlags.NoTitle | ImPlotFlags.NoMenus | ImPlotFlags.NoBoxSelect,
                 ImPlotAxisFlags.None, ImPlotAxisFlags.None)) {
             ImPlot.setLegendLocation(ImPlotLocation.South, ImPlotOrientation.Horizontal, true);
-            int count = this.result.hours().length;
+            int count = result.hours().length;
             pushPlotColor(ImPlotCol.Line, 0.6f, 0.6f, 0.6f, 1.0f);
-            ImPlot.plotLine("Outdoor", this.result.hours(), this.result.outdoorTemps(), count, 0);
+            ImPlot.plotLine("Outdoor", result.hours(), result.outdoorTemps(), count, 0);
             ImPlot.popStyleColor();
             pushPlotColor(ImPlotCol.Line, 0.3f, 0.7f, 1.0f, 1.0f);
-            ImPlot.plotLine("Room", this.result.hours(), this.result.roomTemps(), count, 0);
+            ImPlot.plotLine("Room", result.hours(), result.roomTemps(), count, 0);
             ImPlot.popStyleColor();
-            ImPlot.plotText(String.format("%.1f", this.result.maxTemp()), this.result.maxHour(), this.result.maxTemp() + 0.5);
-            ImPlot.plotText(String.format("%.1f", this.result.minTemp()), this.result.minHour(), this.result.minTemp() - 0.5);
+            ImPlot.plotText(String.format("%.1f", result.maxTemp()), result.maxHour(), result.maxTemp() + 0.5);
+            ImPlot.plotText(String.format("%.1f", result.minTemp()), result.minHour(), result.minTemp() - 0.5);
             ImPlot.endPlot();
         }
 
-        ImGui.text(String.format("Highest: %.2f °C in %s", this.result.maxTemp(), formatHours(this.result.maxHour())));
-        ImGui.text(String.format("Lowest:  %.2f °C in %s", this.result.minTemp(), formatHours(this.result.minHour())));
+        ImGui.text(String.format("Highest: %.2f °C in %s", result.maxTemp(), formatHours(result.maxHour())));
+        ImGui.text(String.format("Lowest:  %.2f °C in %s", result.minTemp(), formatHours(result.minHour())));
         ImGui.textDisabled("Assumes doors, windows and heat sources stay as they are now.");
-    }
-
-    private void refresh(IsoThermalRoom room) {
-        double now = GameTime.getInstance().getWorldAgeHours();
-        if (this.outdoorCurve == null || Math.abs(now - this.outdoorSampledAt) >= ThermalForecast.STEP_HOURS) {
-            this.outdoorCurve = ThermalForecast.sampleOutdoorCurve();
-            this.outdoorSampledAt = now;
-        }
-        // Re-run immediately when the owner switches rooms, so the old room's curve never shows under the new header
-        long millis = System.currentTimeMillis();
-        if (this.result == null || this.resultRoomId != room.getId() || millis - this.computedAtMillis >= REFRESH_MILLIS) {
-            this.result = ThermalForecast.run(room, this.outdoorCurve);
-            this.resultRoomId = room.getId();
-            this.computedAtMillis = millis;
-        }
     }
 
     private static String formatHours(double hours) {

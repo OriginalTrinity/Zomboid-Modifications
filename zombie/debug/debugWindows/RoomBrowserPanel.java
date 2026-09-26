@@ -61,7 +61,7 @@ public class RoomBrowserPanel extends PZDebugWindow {
                 ImGui.text(String.format("%.2f °C", room.getCurrentTemperature()));
 
                 if (hovered) {
-                    RoomThermalPanel.highlightRoomBounds(room.getDebugInfo(), 0.36f, 0.9f, 0.42f, 0.35f, false);
+                    RoomThermalPanel.highlightRoomBounds(room, 0.36f, 0.9f, 0.42f, 0.35f, false);
                 }
                 if (clicked) {
                     RoomThermalPanel panel = this.getOrCreateRoomThermalPanel(room.getId());

@@ -4,6 +4,7 @@ import imgui.ImGui;
 import imgui.flag.ImGuiTableFlags;
 import zombie.GameTime;
 import zombie.iso.weather.RoomTemperatureManager;
+import zombie.network.GameClient;
 
 import java.util.List;
 
@@ -18,15 +19,22 @@ public class PersistenceInspectorPanel extends PZDebugWindow {
 
     @Override
     protected void doWindowContents() {
+        RoomTemperatureManager.getInstance().requestPersistentThermalData();
         List<RoomTemperatureManager.PersistentThermalData> ptds = RoomTemperatureManager.getInstance().getPersistentThermalData();
+
+        if (!RoomTemperatureManager.getInstance().hasPersistentThermalData()) {
+            ImGui.textDisabled("Waiting for server...");
+            return;
+        }
+
         double now = GameTime.getInstance().getWorldAgeHours();
         double maxAge = RoomTemperatureManager.ThermalConfig.PERSISTENT_THERMAL_DATA_MAX_AGE;
 
         ImGui.text("Stale entries: " + ptds.size());
         ImGui.text(String.format("Max age before cleanup: %.0f hours", maxAge));
         ImGui.separator();
-        if (ImGui.button("Force Cleanup Pass")) {
-            RoomTemperatureManager.getInstance().evaluatePersistentThermalDataCleanup();
+        if (ImGui.button("Force Clear")) {
+            RoomTemperatureManager.getInstance().clearPersistentThermalData();
         }
         ImGui.separator();
 

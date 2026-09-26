@@ -502,7 +502,9 @@ public class PacketTypes {
         RoomThermalSnapshot(RoomThermalSnapshotPacket.class),
         RoomThermalDelta(RoomThermalDeltaPacket.class),
         RoomThermalDataRequest(RoomThermalDataRequestPacket.class),
-        RoomThermalRemove(RoomThermalRemovePacket.class);
+        RoomThermalRemove(RoomThermalRemovePacket.class),
+        RoomThermalDebug(RoomThermalDebugPacket.class),
+        RoomThermalPersistence(RoomThermalPersistencePacket.class),
         RoomThermalConfig(RoomThermalConfigPacket.class)
         ;
 

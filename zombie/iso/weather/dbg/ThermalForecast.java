@@ -1,6 +1,8 @@
 package zombie.iso.weather.dbg;
 
 import zombie.GameTime;
+import zombie.core.network.ByteBufferReader;
+import zombie.core.network.ByteBufferWriter;
 import zombie.iso.IsoThermalRoom;
 import zombie.iso.weather.ClimateManager;
 import zombie.iso.weather.ClimateValues;
@@ -16,7 +18,35 @@ public final class ThermalForecast {
     private static ClimateValues climateValues;
 
     public record OutdoorCurve(float[] temps, float[] sun) {}
-    public record Result(double[] hours, double[] roomTemps, double[] outdoorTemps, int roomCount, float maxTemp, float maxHour, float minTemp, float minHour) {}
+    public record Result(double[] hours, double[] roomTemps, double[] outdoorTemps, int roomCount, float maxTemp, float maxHour, float minTemp, float minHour) {
+
+        public void write(ByteBufferWriter b) {
+            b.putInt(this.roomCount);
+            b.putFloat(this.maxTemp);
+            b.putFloat(this.maxHour);
+            b.putFloat(this.minTemp);
+            b.putFloat(this.minHour);
+            b.putInt(this.roomTemps.length);
+            for (int i = 0; i < this.roomTemps.length; i++) {
+                b.putFloat((float) this.roomTemps[i]);
+                b.putFloat((float) this.outdoorTemps[i]);
+            }
+        }
+
+        public static Result read(ByteBufferReader b) {
+            int roomCount = b.getInt();
+            float maxTemp = b.getFloat(), maxHour = b.getFloat(), minTemp = b.getFloat(), minHour = b.getFloat();
+            int count = b.getInt();
+            double[] hours = new double[count], roomTemps = new double[count], outdoorTemps = new double[count];
+            for (int i = 0; i < count; i++) {
+                hours[i] = i * STEP_HOURS;
+                roomTemps[i] = b.getFloat();
+                outdoorTemps[i] = b.getFloat();
+            }
+            return new Result(hours, roomTemps, outdoorTemps, roomCount, maxTemp, maxHour, minTemp, minHour);
+        }
+
+    }
 
     private ThermalForecast() {}
 
@@ -67,7 +97,7 @@ public final class ThermalForecast {
             float sun = sampleCurve(outdoor.sun(), (s - 1) * STEP_HOURS);
 
             for (int i = 0; i < count; i++) {
-                float[] eval = rooms.get(i).evaluateTargetTemperature(outside, sun, lookup);
+                float[] eval = rooms.get(i).evaluateTargetTemperature(outside, sun, lookup, null);
                 targets[i] = eval[2];
                 weightSums[i] = eval[0];
             }
@@ -104,7 +134,7 @@ public final class ThermalForecast {
             room.evaluateTargetTemperature(outsideTemp, 0.0f, neighbor -> {
                 if (neighbor.getSquares() != null && seen.add(neighbor)) queue.add(neighbor);
                 return neighbor.getCurrentTemperature();
-            });
+            }, null);
         }
         return rooms;
     }

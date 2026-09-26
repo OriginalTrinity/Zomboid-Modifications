@@ -2,6 +2,7 @@ package zombie.iso.weather;
 
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.commons.lang3.tuple.Triple;
+import org.jetbrains.annotations.Nullable;
 import zombie.GameTime;
 import zombie.GameWindow;
 import zombie.MainThread;
@@ -44,6 +45,7 @@ import java.util.function.Function;
 
 public class RoomTemperatureManager {
 
+    private static final long PERSISTENCE_REFRESH_MS = 5000;
     private static RoomTemperatureManager instance;
 
     private final ArrayList<IsoThermalRoom> simulatedRooms;
@@ -65,6 +67,10 @@ public class RoomTemperatureManager {
     private double lastCalculateWorldHours = -1;
     private double lastCleanUpMillis = -1;
     private float groundTemperature = ThermalConfig.GROUND_TEMPERATURE;
+
+    // Client only:
+    private long lastPersistenceRequestMillis;
+    private boolean remotePersistenceDataReceived;
 
     public RoomTemperatureManager() {
         this.simulatedRooms = new ArrayList<>();
@@ -100,7 +106,6 @@ public class RoomTemperatureManager {
         }
 
         double now = GameTime.getInstance().getWorldAgeHours();
-
         if (now - this.lastApplyWorldHours >= ThermalConfig.TEMP_APPLY_INTERVAL_HOURS) {
             this.simulatedRooms.forEach(IsoThermalRoom::applyTemperatureChange);
             if (GameServer.server) {
@@ -405,24 +410,23 @@ public class RoomTemperatureManager {
             room.setLastUpdate(now);
             return;
         }
-        int squareCount = Math.max(room.getSquares().size(), 1);
 
         Triple<Double, Float, Float> oldest = this.outdoorHistory.peekFirst();
         if (oldest != null && cursor < oldest.getLeft()) {
             float[] avg = this.averageOutdoorHistory();
             room.calculateTargetTemperature(avg[0], avg[1]);
-            room.stepTemperature(oldest.getLeft() - cursor, squareCount);
+            room.stepTemperature(oldest.getLeft() - cursor);
             cursor = oldest.getLeft();
         }
         for (Triple<Double, Float, Float> sample : this.outdoorHistory) {
             if (sample.getLeft() <= cursor) continue;
             room.calculateTargetTemperature(sample.getMiddle(), sample.getRight());
-            room.stepTemperature(sample.getLeft() - cursor, squareCount);
+            room.stepTemperature(sample.getLeft() - cursor);
             cursor = sample.getLeft();
         }
 
         room.calculateTargetTemperature();
-        room.stepTemperature(now - cursor, squareCount);
+        room.stepTemperature(now - cursor);
         room.setLastUpdate(now);
     }
 
@@ -635,7 +639,29 @@ public class RoomTemperatureManager {
         }
     }
 
-    private void savePersistentThermalData(List<PersistentThermalData> staleRooms) {
+    public void requestPersistentThermalData() {
+        if (!GameClient.client) return;
+        long now = System.currentTimeMillis();
+        if (now - this.lastPersistenceRequestMillis < PERSISTENCE_REFRESH_MS) return;
+        this.lastPersistenceRequestMillis = now;
+        INetworkPacket.send(GameClient.connection, PacketTypes.PacketType.RoomThermalPersistence, RoomThermalPersistencePacket.ACTION_VIEW);
+    }
+
+    public void applyPersistentThermalDataFromServer(List<PersistentThermalData> data) {
+        this.staleRooms.clear();
+        this.staleRooms.addAll(data);
+        this.remotePersistenceDataReceived = true;
+    }
+
+    public void clearPersistentThermalData() {
+        if (GameClient.client) {
+            INetworkPacket.send(GameClient.connection, PacketTypes.PacketType.RoomThermalPersistence, RoomThermalPersistencePacket.ACTION_CLEANUP);
+            return;
+        }
+        this.staleRooms.clear();
+    }
+
+    private void savePersistentThermalData(List<PersistentThermalData> data) {
         File outFile = new File(ZomboidFileSystem.instance.getFileNameInCurrentSave("thermalSim.bin"));
         File tmpFile = new File(outFile.getPath() + ".tmp");
         try (DataOutputStream output = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(tmpFile)))) {
@@ -740,6 +766,8 @@ public class RoomTemperatureManager {
         this.lastCleanUpMillis = -1;
         this.tileScanWorker.stop();
         this.unloadedTemperatureCache.clear();
+        this.lastPersistenceRequestMillis = 0;
+        this.remotePersistenceDataReceived = false;
 
         ThermalConfig.load();
     }
@@ -774,6 +802,10 @@ public class RoomTemperatureManager {
     public static float getCurrentSunStrength() {
         ClimateManager climateManager = ClimateManager.getInstance();
         return climateManager.getDayLightStrength() * (1.0f - climateManager.getCloudIntensity());
+    }
+
+    public boolean hasPersistentThermalData() {
+        return !GameClient.client || this.remotePersistenceDataReceived;
     }
 
     public float getLastKnownTemperatureAt(float fx, float fy, float fz) {
@@ -836,6 +868,19 @@ public class RoomTemperatureManager {
     }
 
     public record PersistentThermalData(int x, int y, int z, float lastTemp, double lastUpdate, boolean isPlayerRoom) {
+
+        public void write(ByteBufferWriter b) {
+            b.putInt(this.x);
+            b.putInt(this.y);
+            b.putInt(this.z);
+            b.putFloat(this.lastTemp);
+            b.putDouble(this.lastUpdate);
+            b.putBoolean(this.isPlayerRoom);
+        }
+
+        public static PersistentThermalData read(ByteBufferReader b) {
+            return new PersistentThermalData(b.getInt(), b.getInt(), b.getInt(), b.getFloat(), b.getDouble(), b.getBoolean());
+        }
 
         @Override
         public boolean equals(Object other) {

@@ -56,7 +56,7 @@ public class RoomThermalSnapshotPacket implements INetworkPacket {
         }
     }
 
-    private static void writeTiles(ByteBufferWriter b, Set<Long> squareHashes) {
+    public static void writeTiles(ByteBufferWriter b, Set<Long> squareHashes) {
         b.putInt(squareHashes.size());
         if (squareHashes.isEmpty()) return;
         int originX = Integer.MAX_VALUE, originY = Integer.MAX_VALUE;
@@ -72,7 +72,7 @@ public class RoomThermalSnapshotPacket implements INetworkPacket {
         }
     }
 
-    private static Set<Long> readTiles(ByteBufferReader b, int z) {
+    public static Set<Long> readTiles(ByteBufferReader b, int z) {
         int tileCount = b.getInt();
         HashSet<Long> squareHashes = new HashSet<>(tileCount * 2);
         if (tileCount == 0) return squareHashes;
