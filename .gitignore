@@ -33,6 +33,7 @@
 !/zombie/network/GameServer.java
 !/zombie/network/PacketTypes.java
 !/zombie/network/ServerMap.java
+!/zombie/entity/components/crafting/CraftUtil.java
 
 # --- Modified vanilla files: gameplay fixes ---
 !/zombie/inventory/InventoryItem.java
