@@ -503,6 +503,8 @@ public class PacketTypes {
         RoomThermalDelta(RoomThermalDeltaPacket.class),
         RoomThermalDataRequest(RoomThermalDataRequestPacket.class),
         RoomThermalRemove(RoomThermalRemovePacket.class);
+        RoomThermalConfig(RoomThermalConfigPacket.class)
+        ;
 
         private Capability requiredCapability;
         public int packetPriority;

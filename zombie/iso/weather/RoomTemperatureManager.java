@@ -14,6 +14,8 @@ import zombie.config.IntegerConfigOption;
 import zombie.core.Core;
 import zombie.core.ThreadGroups;
 import zombie.core.math.PZMath;
+import zombie.core.network.ByteBufferReader;
+import zombie.core.network.ByteBufferWriter;
 import zombie.core.raknet.UdpConnection;
 import zombie.debug.DebugType;
 import zombie.debug.LogSeverity;
@@ -27,15 +29,18 @@ import zombie.iso.areas.isoregion.regions.IsoWorldRegion;
 import zombie.network.GameClient;
 import zombie.network.GameServer;
 import zombie.network.PacketTypes;
-import zombie.network.packets.INetworkPacket;
-import zombie.network.packets.RoomThermalDeltaPacket;
-import zombie.network.packets.RoomThermalSnapshotPacket;
+import zombie.network.packets.*;
 
 import java.io.*;
+import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 
 public class RoomTemperatureManager {
 
@@ -539,6 +544,11 @@ public class RoomTemperatureManager {
         for (IsoPlayer player : GameServer.getPlayers()) {
             UdpConnection connection = GameServer.getConnectionFromPlayer(player);
             if (connection == null) continue;
+
+            if (!this.playerSyncedTemps.containsKey(player)) {
+                INetworkPacket.send(connection, PacketTypes.PacketType.RoomThermalConfig, RoomThermalConfigPacket.ACTION_SYNC);
+            }
+
             HashMap<Long, Float> knownTemps = this.playerSyncedTemps.computeIfAbsent(player, p -> new HashMap<>());
             ArrayList<IsoThermalRoom> relevant = this.getRelevantRooms(player);
             HashSet<Long> relevantIds = new HashSet<>();
@@ -730,6 +740,8 @@ public class RoomTemperatureManager {
         this.lastCleanUpMillis = -1;
         this.tileScanWorker.stop();
         this.unloadedTemperatureCache.clear();
+
+        ThermalConfig.load();
     }
 
     public static IsoRoom getMappedRoom(IsoGridSquare sq) {
@@ -878,41 +890,44 @@ public class RoomTemperatureManager {
     private record ChunkLifecycleEvent(int wx, int wy, boolean loaded) {}
 
     public static class ThermalConfig {
-        // RoomTemperatureManager constants
-        public static double PLAYER_ROOM_STALE_MATCH_RADIUS = 32.0;
-        public static double ROOM_SYNC_RELEVANCE_RADIUS = 80.0;
-        public static float TEMP_SYNC_EPSILON = 0.05f;
-        public static int ROOM_REQUEST_COOLDOWN = 5000;
-        public static double OUTDOOR_SAMPLE_INTERVAL_HOURS = 1.0;
-        public static double OUTDOOR_HISTORY_MAX_HOURS = 72.0;
-        public static double TEMP_APPLY_INTERVAL_HOURS = 0.02;   // ~1 game-minute
-        public static double TEMP_CALCULATE_INTERVAL_HOURS = 0.1; // ~6 game-minutes
-        public static double PERSISTENT_THERMAL_DATA_MAX_AGE = 720.0;
+        private static int revision;
+
+        // Global constants
+        public static int PLAYER_ROOM_STALE_MATCH_RADIUS;
+        public static int ROOM_SYNC_RELEVANCE_RADIUS;
+        public static float TEMP_SYNC_EPSILON;
+        public static int ROOM_REQUEST_COOLDOWN;
+        public static float OUTDOOR_SAMPLE_INTERVAL_HOURS;
+        public static int OUTDOOR_HISTORY_MAX_HOURS;
+        public static float TEMP_APPLY_INTERVAL_HOURS;   // ~1 game-minute
+        public static float TEMP_CALCULATE_INTERVAL_HOURS; // ~6 game-minutes
+        public static int PERSISTENT_THERMAL_DATA_MAX_AGE;
 
         // IsoThermalRoom constants
-        public static float BASE_COEFFICIENT = 0.05f;
-        public static float WINDOW_CLOSED_COEFFICIENT = 0.03f;
-        public static float WINDOW_CURTAIN_MULTIPLIER = 0.6f;
-        public static float WINDOW_OPEN_COEFFICIENT = 0.5f;
-        public static float BARRICADE_INSULATION_MULTIPLIER = 1.0f;
-        public static float DOOR_CLOSED_COEFFICIENT = 0.02f;
-        public static float DOOR_OPEN_COEFFICIENT = 0.8f;
-        public static float BREACH_COEFFICIENT = 1.0f;
-        public static float STAIR_LINK_COEFFICIENT = 3.0f;
+        public static float BASE_COEFFICIENT;
+        public static float WINDOW_CLOSED_COEFFICIENT;
+        public static float WINDOW_CURTAIN_MULTIPLIER;
+        public static float WINDOW_OPEN_COEFFICIENT;
+        public static float BARRICADE_INSULATION_MULTIPLIER;
+        public static float DOOR_CLOSED_COEFFICIENT;
+        public static float DOOR_OPEN_COEFFICIENT;
+        public static float BREACH_COEFFICIENT;
+        public static float STAIR_LINK_COEFFICIENT;
 
-        public static float HEATSOURCE_MIN_COEFFICIENT = 0.05f;
-        public static float HEATSOURCE_MAX_COEFFICIENT = 10.0f;
-        public static float HEATSOURCE_RADIUS_SCALE = 1.0f;
-        public static int HEATSOURCE_PROXIMITY_RADIUS = 3;
-        public static float HEATSOURCE_PROXIMITY_STRENGTH = 0.5f;
-        public static float CLIMATE_CONTROL_COEFFICIENT = 8.0f;
+        public static float HEATSOURCE_MIN_COEFFICIENT;
+        public static float HEATSOURCE_MAX_COEFFICIENT;
+        public static float HEATSOURCE_RADIUS_SCALE;
+        public static int HEATSOURCE_PROXIMITY_RADIUS;
+        public static float HEATSOURCE_PROXIMITY_STRENGTH;
+        public static float CLIMATE_CONTROL_COEFFICIENT;
 
-        public static float TEMP_CHANGE_RATE_MULTIPLIER = 20.0f;
-        public static float INTERROOM_TRANSFER_MULTIPLIER = 5.0f;
-        public static float HEATING_RATE_MULTIPLIER = 1.0f;
-        public static float COOLING_RATE_MULTIPLIER = 1.0f;
-        public static float MAX_TEMP_DELTA = 10.0f;
+        public static float TEMP_CHANGE_RATE_MULTIPLIER;
+        public static float INTERROOM_TRANSFER_MULTIPLIER;
+        public static float HEATING_RATE_MULTIPLIER;
+        public static float COOLING_RATE_MULTIPLIER;
+        public static float MAX_TEMP_DELTA;
 
+        // Environment constants
         public static float UPPER_FLOOR_TEMP_DROP = 1.0f; // °C colder outdoor air per z-level > 0
         public static float SOLAR_ROOF_GAIN = 8.0f; // °C added to a roof-exposed room's outdoor air at full sun
         public static float GROUND_TEMPERATURE = 10.0f; // neutral ground temperature
@@ -921,170 +936,228 @@ public class RoomTemperatureManager {
         public static float BASEMENT_OUTDOOR_FACTOR = 0.2f;
         public static float MIN_FLOOR_OUTDOOR_MULTIPLIER = 0.1f;
 
+        public static final List<Option<? extends Number>> OPTIONS = List.of(
+                Option.ofInteger("PLAYER_ROOM_STALE_MATCH_RADIUS", "Max tiles between a rebuilt player room and its saved temperature to still match", Option.Type.GLOBAL, 1, 256, 32),
+                Option.ofInteger("ROOM_SYNC_RELEVANCE_RADIUS", "Rooms within this many tiles of a player are synced to their client", Option.Type.GLOBAL, 1, 256, 80),
+                Option.ofFloat("TEMP_SYNC_EPSILON", "Minimum temperature change (°C) before an update is sent to clients", Option.Type.GLOBAL, 0.001f, Float.MAX_VALUE, 0.05f),
+                Option.ofInteger("ROOM_REQUEST_COOLDOWN", "Milliseconds before a client may request the same unknown room again", Option.Type.GLOBAL, 1, Integer.MAX_VALUE, 5000),
+                Option.ofFloat("OUTDOOR_SAMPLE_INTERVAL_HOURS", "Game hours between recorded outdoor temperature samples", Option.Type.GLOBAL, 0.01f, Float.MAX_VALUE, 1.0f),
+                Option.ofInteger("OUTDOOR_HISTORY_MAX_HOURS", "Max number of game hours a outdoor sample is kept", Option.Type.GLOBAL, 1, 8760, 72),
+                Option.ofFloat("TEMP_APPLY_INTERVAL_HOURS", "Game hours between room temperature steps", Option.Type.GLOBAL, 0.0f, Float.MAX_VALUE, 0.02f),
+                Option.ofFloat("TEMP_CALCULATE_INTERVAL_HOURS", "Game hours between target temperature recalculations", Option.Type.GLOBAL, 0.0f, Float.MAX_VALUE, 0.1f),
+                Option.ofInteger("PERSISTENT_THERMAL_DATA_MAX_AGE", "Max number of game hours a room's thermal state is kept saved", Option.Type.GLOBAL, 1, 8760, 720),
+                Option.ofFloat("BASE_COEFFICIENT", "Heat exchange with the outdoors through walls and roof", Option.Type.ROOM, 0.0f, Float.MAX_VALUE, 0.05f),
+                Option.ofFloat("WINDOW_CLOSED_COEFFICIENT", "Heat exchange through a closed window", Option.Type.ROOM, 0.0f, Float.MAX_VALUE, 0.03f),
+                Option.ofFloat("WINDOW_CURTAIN_MULTIPLIER", "Multiplier on a window's exchange while its curtains are closed", Option.Type.ROOM, 0.0f, Float.MAX_VALUE, 0.6f),
+                Option.ofFloat("WINDOW_OPEN_COEFFICIENT", "Heat exchange through an open or smashed window", Option.Type.ROOM, 0.0f, Float.MAX_VALUE, 0.5f),
+                Option.ofFloat("BARRICADE_INSULATION_MULTIPLIER", "How strongly barricades reduce window exchange (0 = no effect)", Option.Type.ROOM, 0.0f, Float.MAX_VALUE, 1.0f),
+                Option.ofFloat("DOOR_CLOSED_COEFFICIENT", "Heat exchange through a closed door", Option.Type.ROOM, 0.0f, Float.MAX_VALUE, 0.02f),
+                Option.ofFloat("DOOR_OPEN_COEFFICIENT", "Heat exchange through an open door", Option.Type.ROOM, 0.0f, Float.MAX_VALUE, 0.95f),
+                Option.ofFloat("BREACH_COEFFICIENT", "Heat exchange through gaps, wall frames, empty window frames and destroyed doors", Option.Type.ROOM, 0.0f, Float.MAX_VALUE, 1.0f),
+                Option.ofFloat("STAIR_LINK_COEFFICIENT", "Heat exchange between floors connected by stairs", Option.Type.ROOM, 0.0f, Float.MAX_VALUE, 3.0f),
+                Option.ofFloat("HEATSOURCE_MIN_COEFFICIENT", "Lowest coefficient a heat source can have", Option.Type.ROOM, 0.0f, Float.MAX_VALUE, 0.05f),
+                Option.ofFloat("HEATSOURCE_MAX_COEFFICIENT", "Highest coefficient a heat source can have", Option.Type.ROOM, 0.0f, Float.MAX_VALUE, 10.0f),
+                Option.ofFloat("HEATSOURCE_RADIUS_SCALE", "How strongly heat source radius correlates to its coefficient", Option.Type.ROOM, 0.0f, Float.MAX_VALUE, 1.0f),
+                Option.ofInteger("HEATSOURCE_PROXIMITY_RADIUS", "Max tiles from a heat source at which characters feel extra warmth", Option.Type.ROOM, 1, Integer.MAX_VALUE, 3),
+                Option.ofFloat("HEATSOURCE_PROXIMITY_STRENGTH", "Share of the gap to the heat source's temperature felt right next to it", Option.Type.ROOM, 0.01f, Float.MAX_VALUE, 0.5f),
+                Option.ofFloat("CLIMATE_CONTROL_COEFFICIENT", "AC strength while the world power is on", Option.Type.ROOM, 0.0f, Float.MAX_VALUE, 8.0f),
+                Option.ofFloat("TEMP_CHANGE_RATE_MULTIPLIER", "Overall speed at which rooms approach their target temperature", Option.Type.ROOM, 0.0f, Float.MAX_VALUE, 20.0f),
+                Option.ofFloat("INTERROOM_TRANSFER_MULTIPLIER", "Multiplier on heat exchange through openings and stairs between rooms", Option.Type.ROOM, 0.0f, Float.MAX_VALUE, 5.0f),
+                Option.ofFloat("HEATING_RATE_MULTIPLIER", "Speed multiplier while a room is warming up", Option.Type.ROOM, 0.0f, Float.MAX_VALUE, 1.0f),
+                Option.ofFloat("COOLING_RATE_MULTIPLIER", "Speed multiplier while a room is cooling down", Option.Type.ROOM, 0.0f, Float.MAX_VALUE, 1.0f),
+                Option.ofFloat("MAX_TEMP_DELTA", "Maximum temperature change per game hour (°C)", Option.Type.ROOM, 0.0f, Float.MAX_VALUE, 10.0f),
+                Option.ofFloat("UPPER_FLOOR_TEMP_DROP", "°C colder outdoor air per floor above ground", Option.Type.ENVIRONMENT, 0.0f, Float.MAX_VALUE, 1.0f),
+                Option.ofFloat("SOLAR_ROOF_GAIN", "°C added to the outdoor air of roof-exposed rooms in full sunshine", Option.Type.ENVIRONMENT, 0.0f, Float.MAX_VALUE, 8.0f),
+                Option.ofFloat("GROUND_TEMPERATURE", "Neutral ground temperature basements are pulled towards", Option.Type.ENVIRONMENT, -Float.MAX_VALUE, Float.MAX_VALUE, 10.0f),
+                Option.ofFloat("GROUND_OUTDOOR_FACTOR", "How much the ground follows the outdoor average (0 = fixed, 1 = fully)", Option.Type.ENVIRONMENT, 0.0f, 1.0f, 0.4f),
+                Option.ofFloat("BASEMENT_GROUND_COEFFICIENT", "Pull towards the ground temperature per level below ground", Option.Type.ENVIRONMENT, 0.0f, Float.MAX_VALUE, 5.0f),
+                Option.ofFloat("BASEMENT_OUTDOOR_FACTOR", "Reduction of outdoor heat exchange per level below ground", Option.Type.ENVIRONMENT, 0.0f, Float.MAX_VALUE, 0.2f),
+                Option.ofFloat("MIN_FLOOR_OUTDOOR_MULTIPLIER", "Lowest outdoor exchange multiplier a basement can reach", Option.Type.ENVIRONMENT, 0.0f, 1.0f, 0.1f)
+        );
         private static final String FILE_NAME = ZomboidFileSystem.instance.getCacheDir() + File.separator + "RoomThermalSim.ini";
+
+        static {
+            OPTIONS.forEach(Option::reset);
+        }
 
         public static void load() {
             ConfigFile file = new ConfigFile();
             if (!file.read(FILE_NAME)) {
                 save();
+                revision++;
                 return;
             }
-            for (ConfigOption option : file.getOptions()) {
-                switch (option.getName()) {
-                    case "PLAYER_ROOM_STALE_MATCH_RADIUS" -> PLAYER_ROOM_STALE_MATCH_RADIUS = Float.parseFloat(option.getValueAsString());
-                    case "ROOM_SYNC_RELEVANCE_RADIUS" -> ROOM_SYNC_RELEVANCE_RADIUS = Float.parseFloat(option.getValueAsString());
-                    case "TEMP_SYNC_EPSILON" -> TEMP_SYNC_EPSILON = Float.parseFloat(option.getValueAsString());
-                    case "ROOM_REQUEST_COOLDOWN" -> ROOM_REQUEST_COOLDOWN = Integer.parseInt(option.getValueAsString());
-                    case "OUTDOOR_SAMPLE_INTERVAL_HOURS" -> OUTDOOR_SAMPLE_INTERVAL_HOURS = Float.parseFloat(option.getValueAsString());
-                    case "OUTDOOR_HISTORY_MAX_HOURS" -> OUTDOOR_HISTORY_MAX_HOURS = Float.parseFloat(option.getValueAsString());
-                    case "TEMP_APPLY_INTERVAL_HOURS" -> TEMP_APPLY_INTERVAL_HOURS = Float.parseFloat(option.getValueAsString());
-                    case "TEMP_CALCULATE_INTERVAL_HOURS" -> TEMP_CALCULATE_INTERVAL_HOURS = Float.parseFloat(option.getValueAsString());
-                    case "PERSISTENT_THERMAL_DATA_MAX_AGE" -> PERSISTENT_THERMAL_DATA_MAX_AGE = Float.parseFloat(option.getValueAsString());
-                    case "BASE_COEFFICIENT" -> BASE_COEFFICIENT = Float.parseFloat(option.getValueAsString());
-                    case "WINDOW_CLOSED_COEFFICIENT" -> WINDOW_CLOSED_COEFFICIENT = Float.parseFloat(option.getValueAsString());
-                    case "WINDOW_CURTAIN_MULTIPLIER" -> WINDOW_CURTAIN_MULTIPLIER = Float.parseFloat(option.getValueAsString());
-                    case "WINDOW_OPEN_COEFFICIENT" -> WINDOW_OPEN_COEFFICIENT = Float.parseFloat(option.getValueAsString());
-                    case "BARRICADE_INSULATION_MULTIPLIER" -> BARRICADE_INSULATION_MULTIPLIER = Float.parseFloat(option.getValueAsString());
-                    case "DOOR_CLOSED_COEFFICIENT" -> DOOR_CLOSED_COEFFICIENT = Float.parseFloat(option.getValueAsString());
-                    case "DOOR_OPEN_COEFFICIENT" -> DOOR_OPEN_COEFFICIENT = Float.parseFloat(option.getValueAsString());
-                    case "BREACH_COEFFICIENT" -> BREACH_COEFFICIENT = Float.parseFloat(option.getValueAsString());
-                    case "STAIR_LINK_COEFFICIENT" -> STAIR_LINK_COEFFICIENT = Float.parseFloat(option.getValueAsString());
-                    case "HEATSOURCE_MIN_COEFFICIENT" -> HEATSOURCE_MIN_COEFFICIENT = Float.parseFloat(option.getValueAsString());
-                    case "HEATSOURCE_MAX_COEFFICIENT" -> HEATSOURCE_MAX_COEFFICIENT = Float.parseFloat(option.getValueAsString());
-                    case "HEATSOURCE_RADIUS_SCALE" -> HEATSOURCE_RADIUS_SCALE = Float.parseFloat(option.getValueAsString());
-                    case "HEATSOURCE_PROXIMITY_RADIUS" -> HEATSOURCE_PROXIMITY_RADIUS = Integer.parseInt(option.getValueAsString());
-                    case "HEATSOURCE_PROXIMITY_STRENGTH" -> HEATSOURCE_PROXIMITY_STRENGTH = Float.parseFloat(option.getValueAsString());
-                    case "CLIMATE_CONTROL_COEFFICIENT" -> CLIMATE_CONTROL_COEFFICIENT = Float.parseFloat(option.getValueAsString());
-                    case "TEMP_CHANGE_RATE_MULTIPLIER" -> TEMP_CHANGE_RATE_MULTIPLIER = Float.parseFloat(option.getValueAsString());
-                    case "INTERROOM_TRANSFER_MULTIPLIER" -> INTERROOM_TRANSFER_MULTIPLIER = Float.parseFloat(option.getValueAsString());
-                    case "HEATING_RATE_MULTIPLIER" -> HEATING_RATE_MULTIPLIER = Float.parseFloat(option.getValueAsString());
-                    case "COOLING_RATE_MULTIPLIER" -> COOLING_RATE_MULTIPLIER = Float.parseFloat(option.getValueAsString());
-                    case "MAX_TEMP_DELTA" -> MAX_TEMP_DELTA = Float.parseFloat(option.getValueAsString());
-                    case "UPPER_FLOOR_TEMP_DROP" -> UPPER_FLOOR_TEMP_DROP = Float.parseFloat(option.getValueAsString());
-                    case "SOLAR_ROOF_GAIN" -> SOLAR_ROOF_GAIN = Float.parseFloat(option.getValueAsString());
-                    case "GROUND_TEMPERATURE" -> GROUND_TEMPERATURE = Float.parseFloat(option.getValueAsString());
-                    case "GROUND_OUTDOOR_FACTOR" -> GROUND_OUTDOOR_FACTOR = Float.parseFloat(option.getValueAsString());
-                    case "BASEMENT_GROUND_COEFFICIENT" -> BASEMENT_GROUND_COEFFICIENT = Float.parseFloat(option.getValueAsString());
-                    case "BASEMENT_OUTDOOR_FACTOR" -> BASEMENT_OUTDOOR_FACTOR = Float.parseFloat(option.getValueAsString());
-                    case "MIN_FLOOR_OUTDOOR_MULTIPLIER" -> MIN_FLOOR_OUTDOOR_MULTIPLIER = Float.parseFloat(option.getValueAsString());
-                }
+            for (ConfigOption configOption : file.getOptions()) {
+                find(configOption.getName()).ifPresent(o -> o.set(configOption.getValueAsString()));
             }
+            revision++;
         }
 
         public static void save() {
-            ConfigFile configFile = new ConfigFile();
             ArrayList<ConfigOption> configOptions = new ArrayList<>();
+            OPTIONS.forEach(option -> {
+                ConfigOption configOption = option.toConfigOption();
+                if (configOption != null) configOptions.add(configOption);
+            });
+            new ConfigFile().write(FILE_NAME, 0, configOptions);
+        }
 
-            ConfigOption option = new DoubleConfigOption("PLAYER_ROOM_STALE_MATCH_RADIUS", 1, 128, 32);
-            ((DoubleConfigOption)option).setValue(PLAYER_ROOM_STALE_MATCH_RADIUS);
-            configOptions.add(option);
-            option = new DoubleConfigOption("ROOM_SYNC_RELEVANCE_RADIUS", 1, 128, 80);
-            ((DoubleConfigOption)option).setValue(ROOM_SYNC_RELEVANCE_RADIUS);
-            configOptions.add(option);
-            option = new DoubleConfigOption("TEMP_SYNC_EPSILON", 0.01, Double.MAX_VALUE, 0.05);
-            ((DoubleConfigOption)option).setValue(TEMP_SYNC_EPSILON);
-            configOptions.add(option);
-            option = new IntegerConfigOption("ROOM_REQUEST_COOLDOWN", 0, Integer.MAX_VALUE, 5000);
-            ((IntegerConfigOption)option).setValue(ROOM_REQUEST_COOLDOWN);
-            configOptions.add(option);
-            option = new DoubleConfigOption("OUTDOOR_SAMPLE_INTERVAL_HOURS", 0.01, Double.MAX_VALUE, 1);
-            ((DoubleConfigOption)option).setValue(OUTDOOR_SAMPLE_INTERVAL_HOURS);
-            configOptions.add(option);
-            option = new DoubleConfigOption("OUTDOOR_HISTORY_MAX_HOURS", 1, Double.MAX_VALUE, 72);
-            ((DoubleConfigOption)option).setValue(OUTDOOR_HISTORY_MAX_HOURS);
-            configOptions.add(option);
-            option = new DoubleConfigOption("TEMP_APPLY_INTERVAL_HOURS", 0, Double.MAX_VALUE, 0.02);
-            ((DoubleConfigOption)option).setValue(TEMP_APPLY_INTERVAL_HOURS);
-            configOptions.add(option);
-            option = new DoubleConfigOption("TEMP_CALCULATE_INTERVAL_HOURS", 0, Double.MAX_VALUE, 0.1);
-            ((DoubleConfigOption)option).setValue(TEMP_CALCULATE_INTERVAL_HOURS);
-            configOptions.add(option);
-            option = new DoubleConfigOption("PERSISTENT_THERMAL_DATA_MAX_AGE", 0, Double.MAX_VALUE, 720.0);
-            ((DoubleConfigOption)option).setValue(PERSISTENT_THERMAL_DATA_MAX_AGE);
-            configOptions.add(option);
-            option = new DoubleConfigOption("BASE_COEFFICIENT", 0, Double.MAX_VALUE, 0.05);
-            ((DoubleConfigOption)option).setValue(BASE_COEFFICIENT);
-            configOptions.add(option);
-            option = new DoubleConfigOption("WINDOW_CLOSED_COEFFICIENT", 0, Double.MAX_VALUE, 0.03);
-            ((DoubleConfigOption)option).setValue(WINDOW_CLOSED_COEFFICIENT);
-            configOptions.add(option);
-            option = new DoubleConfigOption("WINDOW_CURTAIN_MULTIPLIER", 0, Double.MAX_VALUE, 0.6);
-            ((DoubleConfigOption)option).setValue(WINDOW_CURTAIN_MULTIPLIER);
-            configOptions.add(option);
-            option = new DoubleConfigOption("WINDOW_OPEN_COEFFICIENT", 0, Double.MAX_VALUE, 0.5);
-            ((DoubleConfigOption)option).setValue(WINDOW_OPEN_COEFFICIENT);
-            configOptions.add(option);
-            option = new DoubleConfigOption("BARRICADE_INSULATION_MULTIPLIER", 0, Double.MAX_VALUE, 1.0);
-            ((DoubleConfigOption)option).setValue(BARRICADE_INSULATION_MULTIPLIER);
-            configOptions.add(option);
-            option = new DoubleConfigOption("DOOR_CLOSED_COEFFICIENT", 0, Double.MAX_VALUE, 0.02);
-            ((DoubleConfigOption)option).setValue(DOOR_CLOSED_COEFFICIENT);
-            configOptions.add(option);
-            option = new DoubleConfigOption("DOOR_OPEN_COEFFICIENT", 0, Double.MAX_VALUE, 0.8);
-            ((DoubleConfigOption)option).setValue(DOOR_OPEN_COEFFICIENT);
-            configOptions.add(option);
-            option = new DoubleConfigOption("BREACH_COEFFICIENT", 0, Double.MAX_VALUE, 1.0);
-            ((DoubleConfigOption)option).setValue(BREACH_COEFFICIENT);
-            configOptions.add(option);
-            option = new DoubleConfigOption("STAIR_LINK_COEFFICIENT", 0, Double.MAX_VALUE, 3.0);
-            ((DoubleConfigOption)option).setValue(STAIR_LINK_COEFFICIENT);
-            configOptions.add(option);
-            option = new DoubleConfigOption("HEATSOURCE_MIN_COEFFICIENT", 0, Double.MAX_VALUE, 0.05);
-            ((DoubleConfigOption)option).setValue(HEATSOURCE_MIN_COEFFICIENT);
-            configOptions.add(option);
-            option = new DoubleConfigOption("HEATSOURCE_MAX_COEFFICIENT", 0, Double.MAX_VALUE, 10.0);
-            ((DoubleConfigOption)option).setValue(HEATSOURCE_MAX_COEFFICIENT);
-            configOptions.add(option);
-            option = new DoubleConfigOption("HEATSOURCE_RADIUS_SCALE", 0, Double.MAX_VALUE, 1.0);
-            ((DoubleConfigOption)option).setValue(HEATSOURCE_RADIUS_SCALE);
-            configOptions.add(option);
-            option = new IntegerConfigOption("HEATSOURCE_PROXIMITY_RADIUS", 0, 128, 3);
-            ((IntegerConfigOption)option).setValue(HEATSOURCE_PROXIMITY_RADIUS);
-            configOptions.add(option);
-            option = new DoubleConfigOption("HEATSOURCE_PROXIMITY_STRENGTH", 0, Double.MAX_VALUE, 0.5);
-            ((DoubleConfigOption)option).setValue(HEATSOURCE_PROXIMITY_STRENGTH);
-            configOptions.add(option);
-            option = new DoubleConfigOption("CLIMATE_CONTROL_COEFFICIENT", 0, Double.MAX_VALUE, 8.0);
-            ((DoubleConfigOption)option).setValue(CLIMATE_CONTROL_COEFFICIENT);
-            configOptions.add(option);
-            option = new DoubleConfigOption("TEMP_CHANGE_RATE_MULTIPLIER", 0, Double.MAX_VALUE, 20.0);
-            ((DoubleConfigOption)option).setValue(TEMP_CHANGE_RATE_MULTIPLIER);
-            configOptions.add(option);
-            option = new DoubleConfigOption("INTERROOM_TRANSFER_MULTIPLIER", 0, Double.MAX_VALUE, 5.0);
-            ((DoubleConfigOption)option).setValue(INTERROOM_TRANSFER_MULTIPLIER);
-            configOptions.add(option);
-            option = new DoubleConfigOption("HEATING_RATE_MULTIPLIER", 0, Double.MAX_VALUE, 1.0);
-            ((DoubleConfigOption)option).setValue(HEATING_RATE_MULTIPLIER);
-            configOptions.add(option);
-            option = new DoubleConfigOption("COOLING_RATE_MULTIPLIER", 0, Double.MAX_VALUE, 1.0);
-            ((DoubleConfigOption)option).setValue(COOLING_RATE_MULTIPLIER);
-            configOptions.add(option);
-            option = new DoubleConfigOption("MAX_TEMP_DELTA", 0, Double.MAX_VALUE, 10.0);
-            ((DoubleConfigOption)option).setValue(MAX_TEMP_DELTA);
-            configOptions.add(option);
-            option = new DoubleConfigOption("UPPER_FLOOR_TEMP_DROP", 0, Double.MAX_VALUE, 1.0);
-            ((DoubleConfigOption)option).setValue(UPPER_FLOOR_TEMP_DROP);
-            configOptions.add(option);
-            option = new DoubleConfigOption("SOLAR_ROOF_GAIN", 0, Double.MAX_VALUE, 8.0);
-            ((DoubleConfigOption)option).setValue(SOLAR_ROOF_GAIN);
-            configOptions.add(option);
-            option = new DoubleConfigOption("GROUND_TEMPERATURE", -Double.MAX_VALUE, Double.MAX_VALUE, 10.0);
-            ((DoubleConfigOption)option).setValue(GROUND_TEMPERATURE);
-            configOptions.add(option);
-            option = new DoubleConfigOption("GROUND_OUTDOOR_FACTOR", 0, 1, 0.4);
-            ((DoubleConfigOption)option).setValue(GROUND_OUTDOOR_FACTOR);
-            configOptions.add(option);
-            option = new DoubleConfigOption("BASEMENT_GROUND_COEFFICIENT", 0, Double.MAX_VALUE, 5.0);
-            ((DoubleConfigOption)option).setValue(BASEMENT_GROUND_COEFFICIENT);
-            configOptions.add(option);
-            option = new DoubleConfigOption("BASEMENT_OUTDOOR_FACTOR", 0, 1, 0.2);
-            ((DoubleConfigOption)option).setValue(BASEMENT_OUTDOOR_FACTOR);
-            configOptions.add(option);
-            option = new DoubleConfigOption("MIN_FLOOR_OUTDOOR_MULTIPLIER", 0, 1, 0.1);
-            ((DoubleConfigOption)option).setValue(MIN_FLOOR_OUTDOOR_MULTIPLIER);
-            configOptions.add(option);
+        public static void resetAll() {
+            OPTIONS.forEach(Option::reset);
+            revision++;
+        }
 
-            configFile.write(FILE_NAME, 0, configOptions);
+        public static void edit(Option<?> option, Number value) {
+            option.set(value);
+            if (GameClient.client) {
+                INetworkPacket.send(GameClient.connection, PacketTypes.PacketType.RoomThermalConfig, RoomThermalConfigPacket.ACTION_SET, option.name(), option.get().doubleValue());
+            }
+        }
+
+        public static void requestSave() {
+            if (GameClient.client) {
+                INetworkPacket.send(GameClient.connection, PacketTypes.PacketType.RoomThermalConfig, RoomThermalConfigPacket.ACTION_SAVE);
+            } else {
+                save();
+            }
+        }
+
+        public static void requestRestore() {
+            if (GameClient.client) {
+                INetworkPacket.send(GameClient.connection, PacketTypes.PacketType.RoomThermalConfig, RoomThermalConfigPacket.ACTION_RESTORE);
+            } else {
+                load();
+            }
+        }
+
+        public static void requestReset() {
+            if (GameClient.client) {
+                INetworkPacket.send(GameClient.connection, PacketTypes.PacketType.RoomThermalConfig, RoomThermalConfigPacket.ACTION_RESET);
+            } else {
+                resetAll();
+            }
+        }
+
+        public static int getRevision() {
+            return revision;
+        }
+
+        public static Optional<Option<? extends Number>> find(String name) {
+            return OPTIONS.stream().filter(o -> o.name().equals(name)).findFirst();
+        }
+
+        public static void writeTo(ByteBufferWriter b) {
+            b.putInt(OPTIONS.size());
+            for (Option<? extends Number> option : OPTIONS) {
+                b.putUTF(option.name());
+                b.putDouble(option.get().doubleValue());
+            }
+        }
+
+        public static void readFrom(ByteBufferReader b) {
+            for (int i = 0, n = b.getInt(); i < n; i++) {
+                String name = b.getUTF();
+                double value = b.getDouble();
+                find(name).ifPresent(o -> o.set(value));
+            }
+            revision++;
+        }
+
+        public record Option<T extends Number>(String name, String description, Type type, T min, T max, T defaultValue, Function<Number, T> converter, Field field) {
+
+            public enum Type {
+                GLOBAL,
+                ROOM,
+                ENVIRONMENT
+            }
+
+            public static Option<Integer> ofInteger(String name, String description, Type type, int min, int max, int defaultValue) {
+                return new Option<>(name, description, type, min, max, defaultValue, Number::intValue, fieldFor(name, int.class));
+            }
+
+            public static Option<Float> ofFloat(String name, String description, Type type, float min, float max, float defaultValue) {
+                return new Option<>(name, description, type, min, max, defaultValue, Number::floatValue, fieldFor(name, float.class));
+            }
+
+            public static Option<Double> ofDouble(String name, String description, Type type, double min, double max, double defaultValue) {
+                return new Option<>(name, description, type, min, max, defaultValue, Number::doubleValue, fieldFor(name, double.class));
+            }
+
+            private static Field fieldFor(String name, Class<?> expectedType) {
+                try {
+                    Field field = ThermalConfig.class.getField(name);
+                    if (field.getType() != expectedType || !Modifier.isStatic(field.getModifiers())) {
+                        throw new IllegalStateException("ThermalConfig." + name + " must be a static " + expectedType);
+                    }
+                    return field;
+                } catch (NoSuchFieldException e) {
+                    throw new IllegalStateException("ThermalConfig has no field " + name, e);
+                }
+            }
+
+            public T get() {
+                try {
+                    return this.converter.apply((Number) this.field.get(null));
+                } catch (IllegalAccessException e) {
+                    DebugType.General.printException(e, LogSeverity.Error);
+                    return this.converter.apply(0);
+                }
+            }
+
+            private void write(T value) {
+                try {
+                    this.field.set(null, value);
+                } catch (IllegalAccessException e) {
+                    DebugType.General.printException(e, LogSeverity.Error);
+                }
+            }
+
+            public void reset() {
+                this.write(this.defaultValue);
+            }
+
+            public void set(Number value) {
+                double clamped = Math.clamp(value.doubleValue(), this.min.doubleValue(), this.max.doubleValue());
+
+                this.write(this.converter.apply(clamped));
+            }
+
+            public void set(String string) {
+                try {
+                    this.set(Double.parseDouble(string));
+                } catch (NumberFormatException e) {
+                    DebugType.General.println("Malformed config option " + this.name + "=" + string + ", keeping " + this.get());
+                }
+            }
+
+            @Nullable
+            public ConfigOption toConfigOption() {
+                if (this.defaultValue instanceof Integer) {
+                    IntegerConfigOption configOption = new IntegerConfigOption(this.name, this.min.intValue(), this.max.intValue(), this.defaultValue.intValue()) {
+                      @Override
+                      public String getTooltip() {
+                          return Option.this.fileComment();
+                      }
+                    };
+                    configOption.setValue(this.get().intValue());
+                    return configOption;
+                }
+                if (this.defaultValue instanceof Float || this.defaultValue instanceof Double) {
+                    DoubleConfigOption configOption = new DoubleConfigOption(this.name, this.min.doubleValue(), this.max.doubleValue(), this.defaultValue.doubleValue()) {
+                        @Override
+                        public String getTooltip() {
+                            return Option.this.fileComment();
+                        }
+                    };
+                    configOption.setValue(this.get().doubleValue());
+                    return configOption;
+                }
+                return null;
+            }
+
+            private String fileComment() {
+                return this.description + "\nDefault: " + this.defaultValue;
+            }
         }
     }
 
