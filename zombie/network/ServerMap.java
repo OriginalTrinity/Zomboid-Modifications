@@ -149,7 +149,9 @@ public class ServerMap {
             }
         }
 
-        RoomTemperatureManager.getInstance().saveAll();
+        if (RoomTemperatureManager.getInstance() != null) {
+            RoomTemperatureManager.getInstance().saveAll();
+        }
 
         this.grid.save();
         DebugLog.log("SaveAll took " + (System.nanoTime() - start) / 1000000.0 + " ms");

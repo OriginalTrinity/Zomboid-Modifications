@@ -797,7 +797,7 @@ public final class GameWindow {
             }
 
             try {
-                if (IsoWorld.instance.currentCell != null && RoomTemperatureManager.getInstance() != null) {
+                if (IsoWorld.instance.currentCell != null && RoomTemperatureManager.getInstance() != null && (GameServer.server || !GameClient.client)) {
                     RoomTemperatureManager.getInstance().saveAll();
                 }
             } catch (Exception ex) {

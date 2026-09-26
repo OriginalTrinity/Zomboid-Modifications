@@ -5571,7 +5571,9 @@ public final class IsoGridSquare {
             s.ReCalculateAll(e, getter);
         }
 
-        if (RoomTemperatureManager.getInstance() != null) RoomTemperatureManager.getInstance().onSquareChanged(this);
+        if (RoomTemperatureManager.getInstance() != null && (GameServer.server || !GameClient.client)) {
+            RoomTemperatureManager.getInstance().onSquareChanged(this);
+        }
     }
 
     public void RecalcAllWithNeighboursMineOnly() {

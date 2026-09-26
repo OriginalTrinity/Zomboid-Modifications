@@ -2448,7 +2448,7 @@ public final class IsoWorld {
                     "World loading could not proceed, there are script load errors. (Actual error may be printed earlier in log)"
                 );
             }
-            if (GameServer.server || !GameClient.client) {
+            if (RoomTemperatureManager.getInstance() != null && (GameServer.server || !GameClient.client)) {
                 DebugType.General.println("RoomTemperatureManager.loadPersistentThermalData() start");
                 RoomTemperatureManager.getInstance().loadPersistentThermalData();
                 DebugType.General.println("RoomTemperatureManager.loadPersistentThermalData() end");

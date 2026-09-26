@@ -3293,7 +3293,7 @@ public final class IsoChunk {
 
         this.preventHotSave = false;
         // Room Temperature Hook
-        if (GameServer.server || !GameClient.client) {
+        if (RoomTemperatureManager.getInstance() != null && (GameServer.server || !GameClient.client)) {
             RoomTemperatureManager.getInstance().onChunkUnloaded(this);
         }
     }
@@ -3976,7 +3976,7 @@ public final class IsoChunk {
         this.preventHotSave = false;
         LuaEventManager.triggerEvent("LoadChunk", this);
         // Room Temperature Hook
-        if (GameServer.server || !GameClient.client) {
+        if (RoomTemperatureManager.getInstance() != null && (GameServer.server || !GameClient.client)) {
             RoomTemperatureManager.getInstance().onChunkLoaded(this);
         }
     }

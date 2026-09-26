@@ -890,10 +890,12 @@ public final class IngameState extends GameState {
             }
         }
 
-        if (!GameClient.client) {
-            RoomTemperatureManager.getInstance().saveAll();
+        if (RoomTemperatureManager.getInstance() != null) {
+            if (!GameClient.client) {
+                RoomTemperatureManager.getInstance().saveAll();
+            }
+            RoomTemperatureManager.getInstance().reset();
         }
-        RoomTemperatureManager.getInstance().reset();
 
         ModelManager.instance.Reset();
         IsoPlayer.Reset();
