@@ -627,42 +627,31 @@ public class RoomTemperatureManager {
 
     private void savePersistentThermalData(List<PersistentThermalData> staleRooms) {
         File outFile = new File(ZomboidFileSystem.instance.getFileNameInCurrentSave("thermalSim.bin"));
-        FileOutputStream outputStream;
-        try {
-            outputStream = new FileOutputStream(outFile);
-        } catch (FileNotFoundException e) {
-            DebugType.General.printException(e, LogSeverity.Error);
+        File tmpFile = new File(outFile.getPath() + ".tmp");
+        try (DataOutputStream output = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(tmpFile)))) {
+            output.writeBytes("RMTM"); // Identifier
+            output.writeShort(2); // Version number
+            output.writeInt(data.size());
+            for (PersistentThermalData ptd : data) this.savePersistentThermalData(output, ptd);
+            this.saveOutdoorTemperatureHistory(output);
+        } catch (IOException e) {
+            DebugType.General.printException(e, "Failed to save PersistentThermalData", LogSeverity.Error);
             return;
         }
-
-        DataOutputStream output = new DataOutputStream(new BufferedOutputStream(outputStream));
         try {
-            output.writeByte(82); // R
-            output.writeByte(77); // M
-            output.writeByte(84); // T
-            output.writeByte(77); // M
-            output.writeShort(2); // Version number
-            output.writeInt(staleRooms.size());
-            staleRooms.forEach(ptd -> this.savePersistentThermalData(output, ptd));
-            this.saveOutdoorTemperatureHistory(output);
-            output.flush();
-            output.close();
+            Files.move(tmpFile.toPath(), outFile.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
         } catch (IOException e) {
-            DebugType.General.printException(e, LogSeverity.Error);
+            DebugType.General.printException(e, "Failed to overwrite old save file!", LogSeverity.Error);
         }
     }
 
-    private void savePersistentThermalData(DataOutputStream output, PersistentThermalData ptd) {
-        try {
-            output.writeInt(ptd.x());
-            output.writeInt(ptd.y());
-            output.writeInt(ptd.z());
-            output.writeFloat(ptd.lastTemp());
-            output.writeDouble(ptd.lastUpdate());
-            output.writeBoolean(ptd.isPlayerRoom());
-        } catch (IOException e) {
-            DebugType.General.printException(e, LogSeverity.Error);
-        }
+    private void savePersistentThermalData(DataOutputStream output, PersistentThermalData ptd) throws IOException {
+        output.writeInt(ptd.x());
+        output.writeInt(ptd.y());
+        output.writeInt(ptd.z());
+        output.writeFloat(ptd.lastTemp());
+        output.writeDouble(ptd.lastUpdate());
+        output.writeBoolean(ptd.isPlayerRoom());
     }
 
     private void saveOutdoorTemperatureHistory(DataOutputStream output) throws IOException {
@@ -686,17 +675,9 @@ public class RoomTemperatureManager {
     }
 
     public void loadPersistentThermalData() {
-        File outFile = new File(ZomboidFileSystem.instance.getFileNameInCurrentSave("thermalSim.bin"));
-        FileInputStream inputStream;
-        try {
-            inputStream = new FileInputStream(outFile);
-        } catch (FileNotFoundException e) {
-            DebugType.General.printException(e, LogSeverity.Error);
-            return;
-        }
-
-        DataInputStream input = new DataInputStream(new BufferedInputStream(inputStream));
-        try {
+        File inFile = new File(ZomboidFileSystem.instance.getFileNameInCurrentSave("thermalSim.bin"));
+        if (!inFile.exists()) return;
+        try (DataInputStream input = new DataInputStream(new BufferedInputStream(new FileInputStream(inFile)))) {
             byte b1 = input.readByte();
             byte b2 = input.readByte();
             byte b3 = input.readByte();
@@ -727,9 +708,8 @@ public class RoomTemperatureManager {
 
                 this.outdoorHistory.add(Triple.of(timeStamp, temp, sun));
             }
-            input.close();
         } catch (IOException e) {
-            DebugType.General.printException(e, LogSeverity.Error);
+            DebugType.General.printException(e, "Failed to load PersistentThermalData!", LogSeverity.Error);
         }
     }
 
