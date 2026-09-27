@@ -5,6 +5,6 @@ import zombie.characters.Capability;
 import zombie.network.PacketSetting;
 import zombie.network.anticheats.AntiCheat;
 
-@PacketSetting(ordering = 8, priority = 1, reliability = 3, requiredCapability = Capability.LoginOnServer, handlingType = 3, anticheats = AntiCheat.Speed)
+@PacketSetting(ordering = 8, priority = 1, reliability = 4, requiredCapability = Capability.LoginOnServer, handlingType = 3, anticheats = AntiCheat.Speed)
 public class VehiclePhysicsReliablePacket extends VehiclePhysicsPacket {
 }

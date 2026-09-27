@@ -7,8 +7,12 @@ import java.util.List;
 import java.util.TreeSet;
 import org.joml.Quaternionf;
 import zombie.GameTime;
+import zombie.characters.IsoPlayer;
 import zombie.core.physics.WorldSimulation;
+import zombie.core.znet.ZNetStatistics;
+import zombie.debug.DebugType;
 import zombie.network.GameClient;
+import zombie.network.packets.vehicle.VehiclePhysicsPacket;
 
 /**
  * Created by kroto on 1/17/2017.
@@ -33,6 +37,30 @@ public class VehicleInterpolation {
     boolean wasHighPing;
     private byte getPointUpdateTimeout;
     private final byte getPointUpdatePer = 10;
+
+    private static final int BASE_DELAY = 500;
+    private static final int MAX_DELAY = 1500;
+    private static final int UNDERRUN_BOOST_STEP = 250;
+    private static final int UNDERRUN_BOOST_MAX = 1000;
+    private static final long UNDERRUN_BOOST_HOLD = 30000L;
+    private static final float UNDERRUN_MIN_SPEED = 1.0F;
+    private static final boolean LOG_DIAGNOSTICS = true;
+    private static final long DIAGNOSTICS_INTERVAL = 10000L;
+    private static final long SEND_GAP_THRESHOLD = 250L;
+    private BaseVehicle vehicle;
+    private int underrunBoost;
+    private long lastUnderrunMillis;
+    private long lastArrivalMillis = -1L;
+    private long lastArrivalDataTime = -1L;
+    private long windowStartMillis = -1L;
+    private int windowPackets;
+    private long windowAgeSum;
+    private long windowAgeMax;
+    private long windowArrivalGapMax;
+    private int windowSendGaps;
+    private long windowSendGapMax;
+    private int windowUnderruns;
+    private int windowBursts;
 
     VehicleInterpolation() {
         this.reset();
@@ -121,10 +149,8 @@ public class VehicleInterpolation {
                 }
             }
 
-            int delayCap = 500;
-            if (this.highPing) {
-                delayCap = (int)(delayCap * 3.0F);
-            }
+            this.decayUnderrunBoost();
+            int delayCap = this.highPing ? MAX_DELAY : Math.min(MAX_DELAY, BASE_DELAY + this.underrunBoost);
 
             if (this.delayTarget != delayCap) {
                 if (this.delayTarget < delayCap) {
@@ -139,7 +165,7 @@ public class VehicleInterpolation {
 
             if (this.wasHighPing && !this.highPing && Math.abs(this.delay - this.delayTarget) < 10 && Math.abs(delayCap - this.delayTarget) < 10) {
                 this.wasHighPing = false;
-                this.delayTarget = 500;
+                this.delayTarget = delayCap;
             }
         }
     }
@@ -177,6 +203,8 @@ public class VehicleInterpolation {
     }
 
     public void interpolationDataAdd(BaseVehicle vehicle, VehicleInterpolationData data, long currentTime) {
+        this.vehicle = vehicle;
+        this.recordArrival(data, currentTime);
         if (this.buffer.isEmpty()) {
             this.interpolationDataCurrentAdd(vehicle);
         }
@@ -239,6 +267,7 @@ public class VehicleInterpolation {
                 return false;
             }
 
+            this.onUnderrun(dataA, towedByInterpolation == null);
             this.wasNull = true;
             this.lastTimeA = -1L;
             this.lastTime = dataA.time;
@@ -353,5 +382,129 @@ public class VehicleInterpolation {
         } else {
             return false;
         }
+    }
+
+    private void onUnderrun(VehicleInterpolationData newest, boolean adjustDelay) {
+        long now = GameTime.getServerTimeMills();
+        float speedSquared = newest.vx * newest.vx + newest.vy * newest.vy + newest.vz * newest.vz;
+        int boostBefore = this.underrunBoost;
+        if (adjustDelay && speedSquared >= UNDERRUN_MIN_SPEED) {
+            this.underrunBoost = Math.min(UNDERRUN_BOOST_MAX, this.underrunBoost + UNDERRUN_BOOST_STEP);
+            this.lastUnderrunMillis = now;
+            int target = Math.min(MAX_DELAY, BASE_DELAY + this.underrunBoost);
+
+            if (this.delayTarget < target) {
+                this.delayTarget = target;
+            }
+
+            if (this.delay < target) {
+                this.history += target - this.delay;
+                this.delay = target;
+            }
+        }
+
+        if (this.isDiagnosticsTarget()) {
+            this.windowUnderruns++;
+            DebugType.Multiplayer.println(
+                    "[VehicleSync] UNDERRUN vehicle=%s newestAge=%d sinceArrival=%d delay=%d target=%d boost=%d->%d ping=%d speed=%.1fkm/h buffer=%d",
+                    this.vehicle.getScriptName(),
+                    now - newest.time,
+                    this.lastArrivalMillis < 0L ? -1L : now - this.lastArrivalMillis,
+                    this.delay,
+                    this.delayTarget,
+                    boostBefore,
+                    this.underrunBoost,
+                    GameClient.connection.getLastPing(),
+                    Math.sqrt(speedSquared) * 3.6f,
+                    this.buffer.size());
+        }
+    }
+
+    private void decayUnderrunBoost() {
+        if (this.underrunBoost > 0) {
+            long now = GameTime.getServerTimeMills();
+            if (now - this.lastUnderrunMillis >= UNDERRUN_BOOST_HOLD) {
+                this.underrunBoost = Math.max(0, this.underrunBoost - UNDERRUN_BOOST_STEP);
+                this.lastUnderrunMillis = now;
+            }
+        }
+    }
+
+    private boolean isDiagnosticsTarget() {
+        if (LOG_DIAGNOSTICS && this.vehicle != null) {
+            IsoPlayer player = IsoPlayer.getInstance();
+            return player != null && player.getVehicle() == this.vehicle;
+        }
+        return false;
+    }
+
+    private void recordArrival(VehicleInterpolationData data, long now) {
+        if (data instanceof VehiclePhysicsPacket) {
+            if (this.isDiagnosticsTarget()) {
+                long age = now - data.time;
+                if (this.windowStartMillis < 0L) {
+                    this.windowStartMillis = now;
+                }
+
+                this.windowPackets++;
+                this.windowAgeSum += age;
+                this.windowAgeMax = Math.max(this.windowAgeMax, age);
+                if (this.lastArrivalMillis >= 0L) {
+                    long arrivalGap = now - this.lastArrivalMillis;
+                    this.windowArrivalGapMax = Math.max(this.windowArrivalGapMax, arrivalGap);
+                    if (arrivalGap < 20L) {
+                        this.windowBursts++;
+                    }
+                }
+
+                if (this.lastArrivalDataTime >= 0L) {
+                    long sendGap = data.time - this.lastArrivalDataTime;
+                    this.windowSendGapMax = Math.max(this.windowSendGapMax, sendGap);
+                    if (sendGap > SEND_GAP_THRESHOLD) {
+                        this.windowSendGaps++;
+                    }
+                }
+
+                if (now - this.windowStartMillis >= DIAGNOSTICS_INTERVAL) {
+                    this.flushDiagnostics(now);
+                }
+            }
+
+            this.lastArrivalMillis = now;
+            this.lastArrivalDataTime = data.time;
+        }
+    }
+
+    private void flushDiagnostics(long now) {
+        ZNetStatistics stats = GameClient.connection.getStatistics();
+        DebugType.Multiplayer.println(
+                "[VehicleSync] vehicle=%s window=%dms packets=%d age avg=%d max=%d arrivalGapMax=%d sendGaps=%d sendGapMax=%d bursts=%d underruns=%d delay=%d target=%d boost=%d ping=%d/%d recv=%.1fKB/s loss=%.3f",
+                this.vehicle.getScriptName(),
+                now - this.windowStartMillis,
+                this.windowPackets,
+                this.windowAgeSum / this.windowPackets,
+                this.windowAgeMax,
+                this.windowArrivalGapMax,
+                this.windowSendGaps,
+                this.windowSendGapMax,
+                this.windowBursts,
+                this.windowUnderruns,
+                this.delay,
+                this.delayTarget,
+                this.underrunBoost,
+                GameClient.connection.getLastPing(),
+                GameClient.connection.getAveragePing(),
+                stats == null ? -1.0 : stats.lastActualBytesReceived / 1024.0,
+                stats == null ? -1.0 : stats.packetlossLastSecond
+        );
+        this.windowStartMillis = now;
+        this.windowPackets = 0;
+        this.windowAgeSum = 0L;
+        this.windowAgeMax = 0L;
+        this.windowArrivalGapMax = 0L;
+        this.windowSendGaps = 0;
+        this.windowSendGapMax = 0L;
+        this.windowUnderruns = 0;
+        this.windowBursts = 0;
     }
 }
