@@ -3194,7 +3194,7 @@ public class IsoPlayer extends IsoLivingCharacter implements IAnimalVisual, IHum
             forceWakeUp = true;
         }
 
-        if (GameClient.client || numPlayers > 1) {
+        if (this.isLocalPlayer() && GameClient.client || numPlayers > 1) {
             forceWakeUp = forceWakeUp || this.pressedAim() || this.pressedMovement(false);
         }
 
