@@ -80,6 +80,8 @@ public final class LightingJNI {
     private static float visionConeLerp;
     private static float lumaInvertedLerp;
     private static CompletableFuture<Void> checkLightsFuture;
+    // Binoculars mod
+    private static final float BINOCULARS_CONE = 40; // degrees
 
     public static void doInvalidateGlobalLights(int playerIndex) {
         Core.dirtyGlobalLightsCount++;
@@ -559,6 +561,9 @@ public final class LightingJNI {
             }
         }
 
+        if (player instanceof IsoPlayer isoPlayer && isoPlayer.isUsingBinoculars()) {
+            cone = PZMath.min(cone, BINOCULARS_CONE);
+        }
         cone *= player.getWornItemsVisionMultiplier();
         cone = PZMath.clamp(cone, 18.0F, 360.0F);
         if (!PZMath.equal(visionConeLerp, cone, 0.033F)) {

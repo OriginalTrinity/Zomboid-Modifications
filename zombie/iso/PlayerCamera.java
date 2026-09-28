@@ -52,6 +52,8 @@ public final class PlayerCamera {
     public float fixJigglyModelsSquareY;
     private static final int[] s_viewport = new int[]{0, 0, 0, 0};
     private static final Vector3f s_tempVector3f_1 = new Vector3f();
+    // Binoculars mod
+    private static final float BINOCULARS_EDGE_MARGIN = 4.0F; // tiles between the view center and the unloaded area
 
     public PlayerCamera(int playerIndex) {
         this.playerIndex = playerIndex;
@@ -99,7 +101,9 @@ public final class PlayerCamera {
             vehicle.getForwardVector(this.lastVehicleForwardDirection);
         }
 
-        if (Core.getInstance().getOptionPanCameraWhileDriving() && vehicle != null && vehicle.getCurrentSpeedKmHour() > 1.0F) {
+        if (player != null && player.isUsingBinoculars()) {
+            this.updateBinoculars(player, mult);
+        } else if (Core.getInstance().getOptionPanCameraWhileDriving() && vehicle != null && vehicle.getCurrentSpeedKmHour() > 1.0F) {
             float zoom = Core.getInstance().getZoom(this.playerIndex);
             float s = vehicle.getCurrentSpeedKmHour() * BaseVehicle.getFakeSpeedModifier() / 10.0F;
             s *= zoom;
@@ -429,5 +433,32 @@ public final class PlayerCamera {
         );
         BaseVehicle.releaseMatrix4f(matrix4f);
         return result;
+    }
+
+    private void updateBinoculars(IsoPlayer player, float mult) {
+        // Pan along the look vector, the same one the vision cone uses
+        Vector2 look = player.getLookVector(offVec);
+        float range = player.getBinocularsRange();
+        float targetX = player.getX() + look.x * range;
+        float targetY = player.getY() + look.y * range;
+
+        // Keep only the center of the view inside the loaded area, so the pan is the same at every zoom level.
+        IsoChunkMap chunkMap = IsoWorld.instance.currentCell.getChunkMap(this.playerIndex);
+        targetX = PZMath.clamp(targetX, chunkMap.getWorldXMinTiles() + BINOCULARS_EDGE_MARGIN, chunkMap.getWorldXMaxTiles() - BINOCULARS_EDGE_MARGIN);
+        targetY = PZMath.clamp(targetY, chunkMap.getWorldYMinTiles() + BINOCULARS_EDGE_MARGIN, chunkMap.getWorldYMaxTiles() - BINOCULARS_EDGE_MARGIN);
+
+        float dx = targetX - player.getX();
+        float dy = targetY - player.getY();
+
+        this.rightClickTargetX = (int) IsoUtils.XToScreen(dx, dy, 0.0f, 0);
+        this.rightClickTargetY = (int) IsoUtils.YToScreen(dx, dy, 0.0f, 0);
+
+        // Same easing as the aim pan
+        mult /= 0.5F * Core.getInstance().getZoom(this.playerIndex);
+        this.rightClickXf = PZMath.step(this.rightClickXf, this.rightClickTargetX, (this.rightClickTargetX - this.rightClickXf) / (80.0F * mult));
+        this.rightClickYf = PZMath.step(this.rightClickYf, this.rightClickTargetY, (this.rightClickTargetY - this.rightClickYf) / (80.0F * mult));
+        this.rightClickX = (int)this.rightClickXf;
+        this.rightClickY = (int)this.rightClickYf;
+        player.dirtyRecalcGridStackTime = 2.0F;
     }
 }

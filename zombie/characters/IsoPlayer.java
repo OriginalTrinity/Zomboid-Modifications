@@ -503,6 +503,10 @@ public class IsoPlayer extends IsoLivingCharacter implements IAnimalVisual, IHum
     private final IsoPlayer.MoveVars drunkMoveVars = new IsoPlayer.MoveVars();
     private long attackAnimThrowTimer = System.currentTimeMillis();
 
+    // Binoculars mod
+    private boolean usingBinoculars;
+    private float binocularsRange = 30.0f; // tiles ahead of the player
+
     public IsoPlayer(IsoCell cell) {
         this(cell, null, 0, 0, 0);
     }
@@ -1915,7 +1919,12 @@ public class IsoPlayer extends IsoLivingCharacter implements IAnimalVisual, IHum
 
     private void updateCursorVisibility() {
         if (this.playerIndex == 0) {
-            if (this.isAiming()) {
+            if (this.isUsingBinoculars()) {
+                // Binoculars mod: the mouse only steers the view, so hide it unless it's over a window
+                if (!this.isDead() && !UIManager.isForceCursorVisible()) {
+                    Mouse.setCursorVisible(false);
+                }
+            } else if (this.isAiming()) {
                 if (!this.isDead()) {
                     if (!Core.getInstance().getOptionShowCursorWhileAiming()) {
                         if (Core.getInstance().getIsoCursorVisibility() != 0) {
@@ -9065,6 +9074,23 @@ public class IsoPlayer extends IsoLivingCharacter implements IAnimalVisual, IHum
         return this.isDraggingCorpse()
             ? null
             : this.getClosestStaticMovingObjectInNearbySquares(IsoDeadBody.class, IsoDeadBody::canPickUpBodyFromSquare, IsoDeadBody::canBeGrabbed);
+    }
+
+    public boolean isUsingBinoculars() {
+        return this.usingBinoculars;
+    }
+
+    public void setUsingBinoculars(boolean usingBinoculars) {
+        this.usingBinoculars = usingBinoculars;
+        this.dirtyRecalcGridStackTime = 2.0f;
+    }
+
+    public float getBinocularsRange() {
+        return this.binocularsRange;
+    }
+
+    public void setBinocularsRange(float binocularsRange) {
+        this.binocularsRange = binocularsRange;
     }
 
     private final class GrapplerGruntChance {
