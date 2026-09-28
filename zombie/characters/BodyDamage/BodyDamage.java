@@ -60,6 +60,10 @@ public final class BodyDamage {
     private static final String behindStr = "BEHIND";
     private static final String leftStr = "LEFT";
     private static final String rightStr = "RIGHT";
+    private static final float SNOW_WETNESS_COLD = 0.25f;
+    private static final float SNOW_WETNESS_MELTING = 0.75f;
+    private static final float SNOW_DRY_TEMPERATURE = -10.0f;
+
     private final ArrayList<BodyPart> bodyParts = new ArrayList<>(18);
     private final ArrayList<BodyPartLast> bodyPartsLastState = new ArrayList<>(18);
     private int damageModCount = 60;
@@ -755,14 +759,9 @@ public final class BodyDamage {
             isOutside = false;
         }
 
-        if (isOutside && ClimateManager.getInstance().isRaining()) {
-            float val = ClimateManager.getInstance().getRainIntensity();
-            if (val < 0.1F) {
-                val = 0.0F;
-            }
-
-            wetnessIncrease = val;
-        } else if (!isOutside || !ClimateManager.getInstance().isRaining()) {
+        if (isOutside && ClimateManager.getInstance().getPrecipitationIntensity() > 0.0f) {
+            wetnessIncrease = this.getWettingPrecipitation();
+        } else {
             float temperature = ClimateManager.getInstance().getAirTemperatureForCharacter(this.parentChar);
             float val = 0.1F;
             if (temperature > 5.0F) {
@@ -836,6 +835,21 @@ public final class BodyDamage {
                 this.setCatchACold(0.0F);
             }
         }
+    }
+
+    private float getWettingPrecipitation() {
+        ClimateManager climateManager = ClimateManager.getInstance();
+        if (climateManager.isRaining()) {
+            float rain = climateManager.getRainIntensity();
+            return rain < 0.1f ? 0.0f : rain;
+        }
+        if (climateManager.isSnowing()) {
+            float snow = climateManager.getSnowIntensity();
+            if (snow < 0.1f) return 0.0f;
+            float melt = PZMath.clamp((climateManager.getTemperature() - SNOW_DRY_TEMPERATURE) / -SNOW_DRY_TEMPERATURE, 0.0f, 1.0f);
+            return snow * PZMath.lerp(SNOW_WETNESS_COLD, SNOW_WETNESS_MELTING, melt);
+        }
+        return 0.0f;
     }
 
     public void TriggerSneezeCough() {

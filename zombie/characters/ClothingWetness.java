@@ -17,6 +17,7 @@ import zombie.inventory.types.Clothing;
 import zombie.scripting.objects.ItemTag;
 
 public final class ClothingWetness {
+    private static final float CONTACT_TRANSFER = 0.5f;
     private static final ItemVisuals itemVisuals = new ItemVisuals();
     private static final ArrayList<BloodBodyPartType> coveredParts = new ArrayList<>();
     private final IsoGameCharacter character;
@@ -292,6 +293,16 @@ public final class ClothingWetness {
 
                             if (baseDelta < 0.0F && this.perspiringParts[i] == 0 && clothing.getWetness() <= 50.0F) {
                                 bodyPart.setWetness(bodyPart.getWetness() + baseDelta / 2.0F);
+                            }
+
+                            // Wet fabric against the skin passes its wetness on
+                            float gap = clothing.getWetness() - bodyPart.getWetness();
+                            if (gap > 0.0F) {
+                                float wetness = gap * 0.01f * baseIncrease * CONTACT_TRANSFER;
+                                bodyPart.setWetness(bodyPart.getWetness() + wetness);
+                                coveredParts.clear();
+                                BloodClothingType.getCoveredParts(clothing.getBloodClothingType(), coveredParts);
+                                clothing.setWetness(clothing.getWetness() - wetness / Math.max(1, coveredParts.size()));
                             }
                         }
                     } else if (baseDelta < 0.0F && this.perspiringParts[i] == 0 || bodyPart.getWetness() <= maxWetness) {
