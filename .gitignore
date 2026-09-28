@@ -43,4 +43,14 @@
 !/zombie/characters/IsoGameCharacter.java
 !/zombie/gameStates/MainScreenState.java
 !/zombie/characters/BodyDamage/BodyDamage.java
-!/zombie/characters/IsoPlayer.java
+!/zombie/characters/ClothingWetness.java
+
+# --- Modified vanilla files: networking ---
+!zombie/network/packets/vehicle/VehiclePhysicsUnreliablePacket.java
+!zombie/network/packets/vehicle/VehiclePhysicsReliablePacket.java
+!zombie/vehicles/VehicleInterpolation.java
+
+# --- Modified vanilla files: Binoculars
+!zombie/characters/IsoPlayer.java
+!zombie/iso/PlayerCamera.java
+!zombie/iso/LightingJNI.java
