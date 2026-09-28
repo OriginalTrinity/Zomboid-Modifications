@@ -29,7 +29,6 @@
 !/zombie/iso/IsoWorld.java
 !/zombie/iso/areas/isoregion/IsoRegions.java
 !/zombie/iso/areas/isoregion/IsoRegionWorker.java
-!/zombie/iso/areas/isoregion/metagrid/WorldRegionToMetaGrid.java
 !/zombie/iso/weather/ClimateManager.java
 !/zombie/network/GameServer.java
 !/zombie/network/PacketTypes.java
@@ -44,6 +43,8 @@
 !/zombie/gameStates/MainScreenState.java
 !/zombie/characters/BodyDamage/BodyDamage.java
 !/zombie/characters/ClothingWetness.java
+!/zombie/iso/objects/IsoFireplace.java
+!/zombie/iso/objects/IsoBarbecue.java
 
 # --- Modified vanilla files: networking ---
 !zombie/network/packets/vehicle/VehiclePhysicsUnreliablePacket.java
