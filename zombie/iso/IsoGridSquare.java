@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Stack;
 import java.util.function.BiConsumer;
+import java.util.function.BiFunction;
 import java.util.function.BiPredicate;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
@@ -98,6 +99,8 @@ import zombie.iso.fboRenderChunk.FBORenderCell;
 import zombie.iso.fboRenderChunk.FBORenderChunk;
 import zombie.iso.fboRenderChunk.FBORenderChunkManager;
 import zombie.iso.fboRenderChunk.ObjectRenderLayer;
+import zombie.iso.objects.GridSquareEdge;
+import zombie.iso.objects.GridSquareEdgeFacingDirection;
 import zombie.iso.objects.IsoAnimalTrack;
 import zombie.iso.objects.IsoBarbecue;
 import zombie.iso.objects.IsoBarricade;
@@ -125,6 +128,7 @@ import zombie.iso.objects.IsoWindowFrame;
 import zombie.iso.objects.IsoWorldInventoryObject;
 import zombie.iso.objects.RainManager;
 import zombie.iso.objects.interfaces.BarricadeAble;
+import zombie.iso.objects.interfaces.GridSquareEdgeElement;
 import zombie.iso.sprite.IsoSprite;
 import zombie.iso.sprite.IsoSpriteInstance;
 import zombie.iso.sprite.IsoSpriteManager;
@@ -150,7 +154,6 @@ import zombie.network.ServerMap;
 import zombie.network.ServerOptions;
 import zombie.network.packets.AddExplosiveTrapPacket;
 import zombie.network.packets.INetworkPacket;
-import zombie.network.packets.RemoveItemFromSquarePacket;
 import zombie.network.packets.actions.AddCorpseToMapPacket;
 import zombie.network.packets.character.AnimalCommandPacket;
 import zombie.network.packets.service.ReceiveModDataPacket;
@@ -175,6 +178,8 @@ import zombie.util.io.BitHeader;
 import zombie.util.io.BitHeaderRead;
 import zombie.util.io.BitHeaderWrite;
 import zombie.util.lambda.Invokers;
+import zombie.util.lambda.TriFunction;
+import zombie.util.lambda.TriPredicate;
 import zombie.util.list.PZArrayList;
 import zombie.util.list.PZArrayUtil;
 import zombie.vehicles.BaseVehicle;
@@ -321,7 +326,7 @@ public final class IsoGridSquare {
     private final ArrayList<IsoWorldInventoryObject> worldObjects = new ArrayList<>();
     public long hasTypes;
     private final PropertyContainer properties = new PropertyContainer();
-    private final ArrayList<IsoObject> specialObjects = new ArrayList<>(0);
+    private final List<IsoObject> specialObjects = new ArrayList<>(0);
     public boolean haveRoof;
     private boolean burntOut;
     private boolean hasFlies;
@@ -445,14 +450,51 @@ public final class IsoGridSquare {
             : this.playerIsDissolvedFlags[playerIndex];
     }
 
-    public boolean hasWater() {
+    public <T> T findObject(Class<? extends T> returnType) {
+        return this.findObject(returnType, (var0, var1x) -> true, null);
+    }
+
+    public <T, U> T findObject(Class<? extends T> returnType, BiPredicate<T, U> checkPredicate, U comparisonParam) {
         for (int i = 0; i < this.objects.size(); i++) {
-            if (this.objects.get(i).hasWater()) {
-                return true;
+            IsoObject object = this.objects.get(i);
+            T objectOfType;
+            if ((objectOfType = Type.tryCastTo(object, (Class<T>)returnType)) != null && checkPredicate.test(objectOfType, comparisonParam)) {
+                return objectOfType;
             }
         }
 
-        return false;
+        return null;
+    }
+
+    public <T> T findSpecialObject(Class<? extends T> returnType) {
+        return this.findSpecialObject(returnType, (var0, var1x) -> true, null);
+    }
+
+    public <T, U> T findSpecialObject(Class<? extends T> returnType, BiPredicate<T, U> checkPredicate, U comparisonParam) {
+        for (IsoObject object : this.specialObjects) {
+            T objectOfType;
+            if ((objectOfType = Type.tryCastTo(object, (Class<T>)returnType)) != null && checkPredicate.test(objectOfType, comparisonParam)) {
+                return objectOfType;
+            }
+        }
+
+        return null;
+    }
+
+    public boolean hasObject(Predicate<IsoObject> checkPredicate) {
+        return this.findObject(IsoObject.class, (obj, predicate) -> predicate.test(obj), checkPredicate) != null;
+    }
+
+    public <T extends GridSquareEdgeElement> T findEdgeObject(Class<? extends T> returnType, GridSquareEdgeFacingDirection facingDirection) {
+        return this.findObject(returnType, (obj, direction) -> obj.getGridSquareEdgeFacingDirection() == direction, facingDirection);
+    }
+
+    public <T extends GridSquareEdgeElement> T findEdgeSpecialObject(Class<? extends T> returnType, GridSquareEdgeFacingDirection facingDirection) {
+        return this.findSpecialObject(returnType, (obj, direction) -> obj.getGridSquareEdgeFacingDirection() == direction, facingDirection);
+    }
+
+    public boolean hasWater() {
+        return this.hasObject(IsoObject::hasWater);
     }
 
     public IsoWaterGeometry getWater() {
@@ -622,7 +664,11 @@ public final class IsoGridSquare {
     }
 
     public boolean isSomethingTo(IsoGridSquare other) {
-        return this.isWallTo(other) || this.isWindowTo(other) || this.isDoorTo(other);
+        return this.isSomethingTo(other, cellGetSquare);
+    }
+
+    public boolean isSomethingTo(IsoGridSquare other, IsoGridSquare.GetSquare getSquare) {
+        return this.isWallTo(other, getSquare) || this.isWindowTo(other, getSquare) || this.isDoorTo(other, getSquare);
     }
 
     public IsoObject getTransparentWallTo(IsoGridSquare other) {
@@ -672,115 +718,156 @@ public final class IsoGridSquare {
     }
 
     public boolean isWallTo(IsoGridSquare other) {
-        if (other == null || other == this) {
-            return false;
-        }
-
-        if (other.x > this.x && other.properties.has(IsoFlagType.collideW) && !other.properties.has(IsoFlagType.WindowW)) {
-            return true;
-        }
-
-        if (this.x > other.x && this.properties.has(IsoFlagType.collideW) && !this.properties.has(IsoFlagType.WindowW)) {
-            return true;
-        }
-
-        if (other.y > this.y && other.properties.has(IsoFlagType.collideN) && !other.properties.has(IsoFlagType.WindowN)) {
-            return true;
-        }
-
-        if (this.y > other.y && this.properties.has(IsoFlagType.collideN) && !this.properties.has(IsoFlagType.WindowN)) {
-            return true;
-        }
-
-        if (other.x != this.x && other.y != this.y) {
-            if (this.isWallTo(IsoWorld.instance.currentCell.getGridSquare(other.x, this.y, this.z), 1)
-                || this.isWallTo(IsoWorld.instance.currentCell.getGridSquare(this.x, other.y, this.z), 1)) {
-                return true;
-            }
-
-            if (other.isWallTo(IsoWorld.instance.currentCell.getGridSquare(other.x, this.y, this.z), 1)
-                || other.isWallTo(IsoWorld.instance.currentCell.getGridSquare(this.x, other.y, this.z), 1)) {
-                return true;
-            }
-        }
-
-        return false;
+        return this.isWallTo(other, cellGetSquare);
     }
 
-    public boolean isWallTo(IsoGridSquare other, int depth) {
-        if (depth > 100) {
-            boolean var3 = false;
-        }
-
-        if (other == null || other == this) {
-            return false;
-        }
-
-        if (other.x > this.x && other.properties.has(IsoFlagType.collideW) && !other.properties.has(IsoFlagType.WindowW)) {
-            return true;
-        }
-
-        if (this.x > other.x && this.properties.has(IsoFlagType.collideW) && !this.properties.has(IsoFlagType.WindowW)) {
-            return true;
-        }
-
-        if (other.y > this.y && other.properties.has(IsoFlagType.collideN) && !other.properties.has(IsoFlagType.WindowN)) {
-            return true;
-        }
-
-        if (this.y > other.y && this.properties.has(IsoFlagType.collideN) && !this.properties.has(IsoFlagType.WindowN)) {
-            return true;
-        }
-
-        if (other.x != this.x && other.y != this.y) {
-            if (this.isWallTo(IsoWorld.instance.currentCell.getGridSquare(other.x, this.y, this.z), depth + 1)
-                || this.isWallTo(IsoWorld.instance.currentCell.getGridSquare(this.x, other.y, this.z), depth + 1)) {
-                return true;
-            }
-
-            if (other.isWallTo(IsoWorld.instance.currentCell.getGridSquare(other.x, this.y, this.z), depth + 1)
-                || other.isWallTo(IsoWorld.instance.currentCell.getGridSquare(this.x, other.y, this.z), depth + 1)) {
-                return true;
-            }
-        }
-
-        return false;
+    public boolean isWallTo(IsoGridSquare other, IsoGridSquare.GetSquare getSquare) {
+        return this.isEdgeElementTo(other, IsoGridSquare::isWall, getSquare);
     }
 
     public boolean isWindowTo(IsoGridSquare other) {
-        if (other == null || other == this) {
-            return false;
+        return this.isWindowTo(other, cellGetSquare);
+    }
+
+    public boolean isWindowTo(IsoGridSquare other, IsoGridSquare.GetSquare getSquare) {
+        return this.isEdgeElementTo(other, IsoGridSquare::isWindow, getSquare);
+    }
+
+    public IsoGridSquare getEast() {
+        return this.getEast(cellGetSquare);
+    }
+
+    public IsoGridSquare getWest() {
+        return this.getWest(cellGetSquare);
+    }
+
+    public IsoGridSquare getSouth() {
+        return this.getSouth(cellGetSquare);
+    }
+
+    public IsoGridSquare getNorth() {
+        return this.getNorth(cellGetSquare);
+    }
+
+    public IsoGridSquare getEast(IsoGridSquare.GetSquare getSquare) {
+        return getSquare.getGridSquare(this.x + 1, this.y, this.z);
+    }
+
+    public IsoGridSquare getWest(IsoGridSquare.GetSquare getSquare) {
+        return getSquare.getGridSquare(this.x - 1, this.y, this.z);
+    }
+
+    public IsoGridSquare getSouth(IsoGridSquare.GetSquare getSquare) {
+        return getSquare.getGridSquare(this.x, this.y + 1, this.z);
+    }
+
+    public IsoGridSquare getNorth(IsoGridSquare.GetSquare getSquare) {
+        return getSquare.getGridSquare(this.x, this.y - 1, this.z);
+    }
+
+    public IsoGridSquare getOppositeSquare(GridSquareEdgeFacingDirection edgeDirection) {
+        return switch (edgeDirection) {
+            case NORTH_SOUTH -> this.getNorth();
+            case EAST_WEST -> this.getWest();
+            default -> null;
+        };
+    }
+
+    public boolean isDiagonalTo(IsoGridSquare other) {
+        return other.x != this.x && other.y != this.y;
+    }
+
+    public boolean isEastOf(IsoGridSquare other) {
+        return this.x > other.x;
+    }
+
+    public boolean isWestOf(IsoGridSquare other) {
+        return this.x < other.x;
+    }
+
+    public boolean isSouthOf(IsoGridSquare other) {
+        return this.y > other.y;
+    }
+
+    public boolean isNorthOf(IsoGridSquare other) {
+        return this.y < other.y;
+    }
+
+    public boolean hasProperty(IsoFlagType flag) {
+        return this.properties.has(flag);
+    }
+
+    public boolean isWall(GridSquareEdge alongEdge) {
+        return this.isWall(alongEdge, cellGetSquare);
+    }
+
+    public boolean isWall(GridSquareEdge alongEdge, IsoGridSquare.GetSquare getSquare) {
+        return this.isEdgeElement(alongEdge, IsoGridSquare::isWall, getSquare);
+    }
+
+    public boolean isWall(GridSquareEdgeFacingDirection facingDirection) {
+        switch (facingDirection) {
+            case NORTH_SOUTH:
+                if (!this.hasProperty(IsoFlagType.collideN)) {
+                    return false;
+                }
+                break;
+            case EAST_WEST:
+                if (!this.hasProperty(IsoFlagType.collideW)) {
+                    return false;
+                }
+                break;
+            default:
+                throw new MatchException(null, null);
         }
 
-        if (other.x > this.x && other.properties.has(IsoFlagType.windowW)) {
-            return true;
-        }
+        return !this.isWindow(facingDirection);
+    }
 
-        if (this.x > other.x && this.properties.has(IsoFlagType.windowW)) {
-            return true;
-        }
+    public boolean isWindow(GridSquareEdge alongEdge) {
+        return this.isWindow(alongEdge, cellGetSquare);
+    }
 
-        if (other.y > this.y && other.properties.has(IsoFlagType.windowN)) {
-            return true;
-        }
+    public boolean isWindow(GridSquareEdge alongEdge, IsoGridSquare.GetSquare getSquare) {
+        return this.isEdgeElement(alongEdge, IsoGridSquare::isWindow, getSquare);
+    }
 
-        if (this.y > other.y && this.properties.has(IsoFlagType.windowN)) {
-            return true;
-        }
+    public boolean isWindow(GridSquareEdgeFacingDirection facingDirection) {
+        return switch (facingDirection) {
+            case NORTH_SOUTH -> this.hasProperty(IsoFlagType.windowN);
+            case EAST_WEST -> this.hasProperty(IsoFlagType.windowW);
+        };
+    }
 
-        if (other.x != this.x && other.y != this.y) {
-            if (this.isWindowTo(IsoWorld.instance.currentCell.getGridSquare(other.x, this.y, this.z))
-                || this.isWindowTo(IsoWorld.instance.currentCell.getGridSquare(this.x, other.y, this.z))) {
-                return true;
-            }
+    public boolean isBlockedWindow(GridSquareEdge alongEdge) {
+        return this.isBlockedWindow(alongEdge, cellGetSquare);
+    }
 
-            if (other.isWindowTo(IsoWorld.instance.currentCell.getGridSquare(other.x, this.y, this.z))
-                || other.isWindowTo(IsoWorld.instance.currentCell.getGridSquare(this.x, other.y, this.z))) {
-                return true;
-            }
-        }
+    public boolean isBlockedWindow(GridSquareEdge alongEdge, IsoGridSquare.GetSquare getSquare) {
+        return this.isEdgeElement(alongEdge, IsoGridSquare::hasBlockedWindow, getSquare);
+    }
 
-        return false;
+    public boolean isDoor(GridSquareEdge alongEdge) {
+        return this.isDoor(alongEdge, cellGetSquare);
+    }
+
+    public boolean isDoor(GridSquareEdge alongEdge, IsoGridSquare.GetSquare getSquare) {
+        return this.isEdgeElement(alongEdge, IsoGridSquare::isDoor, getSquare);
+    }
+
+    public boolean isDoor(GridSquareEdgeFacingDirection facingDirection) {
+        return switch (facingDirection) {
+            case NORTH_SOUTH -> this.hasProperty(IsoFlagType.doorN);
+            case EAST_WEST -> this.hasProperty(IsoFlagType.doorW);
+        };
+    }
+
+    public boolean isBlockedDoor(GridSquareEdge alongEdge) {
+        return this.isBlockedDoor(alongEdge, cellGetSquare);
+    }
+
+    public boolean isBlockedDoor(GridSquareEdge alongEdge, IsoGridSquare.GetSquare getSquare) {
+        return this.isEdgeElement(alongEdge, IsoGridSquare::hasBlockedDoor, getSquare);
     }
 
     public boolean haveDoor() {
@@ -846,43 +933,22 @@ public final class IsoGridSquare {
     }
 
     public boolean isDoorTo(IsoGridSquare other) {
-        if (other == null || other == this) {
-            return false;
-        }
+        return this.isDoorTo(other, cellGetSquare);
+    }
 
-        if (other.x > this.x && other.properties.has(IsoFlagType.doorW)) {
-            return true;
-        }
-
-        if (this.x > other.x && this.properties.has(IsoFlagType.doorW)) {
-            return true;
-        }
-
-        if (other.y > this.y && other.properties.has(IsoFlagType.doorN)) {
-            return true;
-        }
-
-        if (this.y > other.y && this.properties.has(IsoFlagType.doorN)) {
-            return true;
-        }
-
-        if (other.x != this.x && other.y != this.y) {
-            if (this.isDoorTo(IsoWorld.instance.currentCell.getGridSquare(other.x, this.y, this.z))
-                || this.isDoorTo(IsoWorld.instance.currentCell.getGridSquare(this.x, other.y, this.z))) {
-                return true;
-            }
-
-            if (other.isDoorTo(IsoWorld.instance.currentCell.getGridSquare(other.x, this.y, this.z))
-                || other.isDoorTo(IsoWorld.instance.currentCell.getGridSquare(this.x, other.y, this.z))) {
-                return true;
-            }
-        }
-
-        return false;
+    public boolean isDoorTo(IsoGridSquare other, IsoGridSquare.GetSquare getSquare) {
+        return this.isEdgeElementTo(other, IsoGridSquare::isDoor, getSquare);
     }
 
     public boolean isBlockedTo(IsoGridSquare other) {
-        return this.isWallTo(other) || this.isWindowBlockedTo(other) || this.isDoorBlockedTo(other) || this.isStairBlockedTo(other);
+        return this.isBlockedTo(other, cellGetSquare);
+    }
+
+    public boolean isBlockedTo(IsoGridSquare other, IsoGridSquare.GetSquare getSquare) {
+        return this.isWallTo(other, getSquare)
+            || this.isWindowBlockedTo(other, getSquare)
+            || this.isDoorBlockedTo(other, getSquare)
+            || this.isStairBlockedTo(other);
     }
 
     public boolean canReachTo(IsoGridSquare other) {
@@ -910,101 +976,31 @@ public final class IsoGridSquare {
     }
 
     public boolean isWindowBlockedTo(IsoGridSquare other) {
-        if (other == null) {
-            return false;
-        }
-
-        if (other.x > this.x && other.hasBlockedWindow(false)) {
-            return true;
-        }
-
-        if (this.x > other.x && this.hasBlockedWindow(false)) {
-            return true;
-        }
-
-        if (other.y > this.y && other.hasBlockedWindow(true)) {
-            return true;
-        }
-
-        if (this.y > other.y && this.hasBlockedWindow(true)) {
-            return true;
-        }
-
-        if (other.x != this.x && other.y != this.y) {
-            if (this.isWindowBlockedTo(IsoWorld.instance.currentCell.getGridSquare(other.x, this.y, this.z))
-                || this.isWindowBlockedTo(IsoWorld.instance.currentCell.getGridSquare(this.x, other.y, this.z))) {
-                return true;
-            }
-
-            if (other.isWindowBlockedTo(IsoWorld.instance.currentCell.getGridSquare(other.x, this.y, this.z))
-                || other.isWindowBlockedTo(IsoWorld.instance.currentCell.getGridSquare(this.x, other.y, this.z))) {
-                return true;
-            }
-        }
-
-        return false;
+        return this.isWindowBlockedTo(other, cellGetSquare);
     }
 
-    public boolean hasBlockedWindow(boolean north) {
-        for (int i = 0; i < this.objects.size(); i++) {
-            IsoObject o = this.objects.get(i);
-            if (o instanceof IsoWindow w && w.getNorth() == north) {
-                return !w.isDestroyed() && !w.IsOpen() || w.isBarricaded();
-            }
-        }
+    public boolean isWindowBlockedTo(IsoGridSquare other, IsoGridSquare.GetSquare getSquare) {
+        return this.isEdgeElementTo(other, IsoGridSquare::isBlockedWindow, getSquare);
+    }
 
-        return false;
+    public boolean hasBlockedWindow(GridSquareEdgeFacingDirection facingDirection) {
+        return this.findObject(IsoWindow.class, IsoWindow::isBlocked, facingDirection) != null;
     }
 
     public boolean isDoorBlockedTo(IsoGridSquare other) {
-        if (other == null) {
-            return false;
-        }
-
-        if (other.x > this.x && other.hasBlockedDoor(false)) {
-            return true;
-        }
-
-        if (this.x > other.x && this.hasBlockedDoor(false)) {
-            return true;
-        }
-
-        if (other.y > this.y && other.hasBlockedDoor(true)) {
-            return true;
-        }
-
-        if (this.y > other.y && this.hasBlockedDoor(true)) {
-            return true;
-        }
-
-        if (other.x != this.x && other.y != this.y) {
-            if (this.isDoorBlockedTo(IsoWorld.instance.currentCell.getGridSquare(other.x, this.y, this.z))
-                || this.isDoorBlockedTo(IsoWorld.instance.currentCell.getGridSquare(this.x, other.y, this.z))) {
-                return true;
-            }
-
-            if (other.isDoorBlockedTo(IsoWorld.instance.currentCell.getGridSquare(other.x, this.y, this.z))
-                || other.isDoorBlockedTo(IsoWorld.instance.currentCell.getGridSquare(this.x, other.y, this.z))) {
-                return true;
-            }
-        }
-
-        return false;
+        return this.isDoorBlockedTo(other, cellGetSquare);
     }
 
-    public boolean hasBlockedDoor(boolean north) {
-        for (int i = 0; i < this.objects.size(); i++) {
-            IsoObject o = this.objects.get(i);
-            if (o instanceof IsoDoor d && d.getNorth() == north) {
-                return !d.isOpen() || d.isBarricaded();
-            }
+    public boolean isDoorBlockedTo(IsoGridSquare other, IsoGridSquare.GetSquare getSquare) {
+        return this.isEdgeElementTo(other, IsoGridSquare::isBlockedDoor, getSquare);
+    }
 
-            if (o instanceof IsoThumpable d && d.isDoor() && d.getNorth() == north) {
-                return !d.open || d.isBarricaded();
-            }
-        }
+    public static boolean isBlockedDoor(IsoObject obj, GridSquareEdgeFacingDirection facingDirection) {
+        return obj instanceof IsoDoor door && door.isBlocked(facingDirection) || obj instanceof IsoThumpable th && th.isBlockedDoor(facingDirection);
+    }
 
-        return false;
+    public boolean hasBlockedDoor(GridSquareEdgeFacingDirection facingDirection) {
+        return this.findObject(IsoObject.class, IsoGridSquare::isBlockedDoor, facingDirection) != null;
     }
 
     public IsoCurtain getCurtain(IsoObjectType curtainType) {
@@ -1018,165 +1014,61 @@ public final class IsoGridSquare {
         return null;
     }
 
+    @Deprecated
     public IsoObject getHoppable(boolean north) {
-        for (int n = 0; n < this.objects.size(); n++) {
-            IsoObject obj = this.objects.get(n);
-            PropertyContainer props = obj.getProperties();
-            if (props != null && props.has(north ? IsoFlagType.HoppableN : IsoFlagType.HoppableW)) {
-                return obj;
-            }
+        return this.getHoppableOrWindowFrame(north ? GridSquareEdgeFacingDirection.NORTH_SOUTH : GridSquareEdgeFacingDirection.EAST_WEST);
+    }
 
-            if (props != null && props.has(north ? IsoFlagType.WindowN : IsoFlagType.WindowW)) {
-                return obj;
-            }
-        }
+    public IsoObject getHoppableOrWindowFrame(GridSquareEdgeFacingDirection facingDirection) {
+        return this.findObject(IsoObject.class, IsoObject::isHoppableOrWindowFrame, facingDirection);
+    }
 
-        return null;
+    public IsoObject getHoppableOrWindowFrame(GridSquareEdge alongEdge) {
+        return this.getHoppableOrWindowFrame(alongEdge, cellGetSquare);
+    }
+
+    public IsoObject getHoppableOrWindowFrame(GridSquareEdge alongEdge, IsoGridSquare.GetSquare getSquare) {
+        return this.getEdgeElement(alongEdge, IsoGridSquare::getHoppableOrWindowFrame, getSquare);
+    }
+
+    public boolean isHoppable(GridSquareEdge alongEdge) {
+        return this.isHoppable(alongEdge, cellGetSquare);
+    }
+
+    public boolean isHoppable(GridSquareEdge alongEdge, IsoGridSquare.GetSquare getSquare) {
+        return this.getHoppableOrWindowFrame(alongEdge, getSquare) != null;
     }
 
     public IsoObject getHoppableTo(IsoGridSquare next) {
-        if (next != null && next != this) {
-            if (next.x < this.x && next.y == this.y) {
-                IsoObject obj = this.getHoppable(false);
-                if (obj != null) {
-                    return obj;
-                }
-            }
+        return this.getHoppableTo(next, cellGetSquare);
+    }
 
-            if (next.x == this.x && next.y < this.y) {
-                IsoObject obj = this.getHoppable(true);
-                if (obj != null) {
-                    return obj;
-                }
-            }
-
-            if (next.x > this.x && next.y == this.y) {
-                IsoObject obj = next.getHoppable(false);
-                if (obj != null) {
-                    return obj;
-                }
-            }
-
-            if (next.x == this.x && next.y > this.y) {
-                IsoObject obj = next.getHoppable(true);
-                if (obj != null) {
-                    return obj;
-                }
-            }
-
-            if (next.x != this.x && next.y != this.y) {
-                IsoGridSquare betweenA = this.getCell().getGridSquare(this.x, next.y, this.z);
-                IsoGridSquare betweenB = this.getCell().getGridSquare(next.x, this.y, this.z);
-                IsoObject obj = this.getHoppableTo(betweenA);
-                if (obj != null) {
-                    return obj;
-                }
-
-                obj = this.getHoppableTo(betweenB);
-                if (obj != null) {
-                    return obj;
-                }
-
-                obj = next.getHoppableTo(betweenA);
-                if (obj != null) {
-                    return obj;
-                }
-
-                obj = next.getHoppableTo(betweenB);
-                if (obj != null) {
-                    return obj;
-                }
-            }
-
-            return null;
-        } else {
-            return null;
-        }
+    public IsoObject getHoppableTo(IsoGridSquare next, IsoGridSquare.GetSquare getSquare) {
+        return this.getEdgeElementTo(next, IsoGridSquare::getHoppableOrWindowFrame, getSquare);
     }
 
     public boolean isHoppableTo(IsoGridSquare other) {
-        if (other == null) {
-            return false;
-        } else if (other.x != this.x && other.y != this.y) {
-            return false;
-        } else if (other.x > this.x && other.properties.has(IsoFlagType.HoppableW)) {
-            return true;
-        } else if (this.x > other.x && this.properties.has(IsoFlagType.HoppableW)) {
-            return true;
-        } else {
-            return other.y > this.y && other.properties.has(IsoFlagType.HoppableN) ? true : this.y > other.y && this.properties.has(IsoFlagType.HoppableN);
-        }
+        return this.isHoppableTo(other, cellGetSquare);
     }
 
-    public IsoObject getBendable(boolean north) {
-        for (int n = 0; n < this.objects.size(); n++) {
-            IsoObject obj = this.objects.get(n);
-            if (BentFences.getInstance().isUnbentObject(obj, north ? IsoDirections.N : IsoDirections.W)) {
-                return obj;
-            }
-        }
+    public boolean isHoppableTo(IsoGridSquare other, IsoGridSquare.GetSquare getSquare) {
+        return other != null && !this.isDiagonalTo(other) && this.isEdgeElementTo(other, IsoGridSquare::isHoppable, getSquare);
+    }
 
-        return null;
+    public IsoObject getBendable(GridSquareEdgeFacingDirection facingDirection) {
+        return this.findObject(IsoObject.class, IsoObject::isUnbentObject, facingDirection);
+    }
+
+    public IsoObject getBendable(GridSquareEdge alongEdge) {
+        return this.getBendable(alongEdge, cellGetSquare);
+    }
+
+    public IsoObject getBendable(GridSquareEdge alongEdge, IsoGridSquare.GetSquare getSquare) {
+        return this.getEdgeElement(alongEdge, IsoGridSquare::getBendable, getSquare);
     }
 
     public IsoObject getBendableTo(IsoGridSquare next) {
-        if (next != null && next != this) {
-            if (next.x < this.x && next.y == this.y) {
-                IsoObject obj = this.getBendable(false);
-                if (obj != null) {
-                    return obj;
-                }
-            }
-
-            if (next.x == this.x && next.y < this.y) {
-                IsoObject obj = this.getBendable(true);
-                if (obj != null) {
-                    return obj;
-                }
-            }
-
-            if (next.x > this.x && next.y == this.y) {
-                IsoObject obj = next.getBendable(false);
-                if (obj != null) {
-                    return obj;
-                }
-            }
-
-            if (next.x == this.x && next.y > this.y) {
-                IsoObject obj = next.getBendable(true);
-                if (obj != null) {
-                    return obj;
-                }
-            }
-
-            if (next.x != this.x && next.y != this.y) {
-                IsoGridSquare betweenA = this.getCell().getGridSquare(this.x, next.y, this.z);
-                IsoGridSquare betweenB = this.getCell().getGridSquare(next.x, this.y, this.z);
-                IsoObject obj = this.getBendableTo(betweenA);
-                if (obj != null) {
-                    return obj;
-                }
-
-                obj = this.getBendableTo(betweenB);
-                if (obj != null) {
-                    return obj;
-                }
-
-                obj = next.getBendableTo(betweenA);
-                if (obj != null) {
-                    return obj;
-                }
-
-                obj = next.getBendableTo(betweenB);
-                if (obj != null) {
-                    return obj;
-                }
-            }
-
-            return null;
-        } else {
-            return null;
-        }
+        return this.getEdgeElementTo(next, IsoGridSquare::getBendable, cellGetSquare);
     }
 
     public void discard() {
@@ -1392,9 +1284,9 @@ public final class IsoGridSquare {
         }
     }
 
-    private float calculateCutawayOutlineAlpha(int playerIndex, boolean north) {
+    private float calculateCutawayOutlineAlpha(int playerIndex, GridSquareEdgeFacingDirection facingDirection) {
         float outlineAlpha = 0.35F;
-        IsoWindow window = this.getWindow(north);
+        IsoWindow window = this.getWindow(facingDirection);
         if (window != null) {
             float windowAlpha = PZMath.clamp_01(window.getRenderInfo(playerIndex).targetAlpha * 2.0F);
             outlineAlpha = PZMath.clamp(1.0F - windowAlpha, 0.0F, 0.35F);
@@ -1554,7 +1446,7 @@ public final class IsoGridSquare {
 
                     SpriteRenderer.instance.setExtraWallShaderParams(wallShaderTexRender);
                     if (PerformanceSettings.fboRenderChunk && FBORenderCell.instance.renderWindowFrameOutline) {
-                        obj.setAlpha(playerIndex, this.calculateCutawayOutlineAlpha(playerIndex, true));
+                        obj.setAlpha(playerIndex, this.calculateCutawayOutlineAlpha(playerIndex, GridSquareEdgeFacingDirection.NORTH_SOUTH));
                     }
 
                     texdModifier.col[0] = colu2;
@@ -1688,7 +1580,7 @@ public final class IsoGridSquare {
 
                     SpriteRenderer.instance.setExtraWallShaderParams(wallShaderTexRender);
                     if (PerformanceSettings.fboRenderChunk && FBORenderCell.instance.renderWindowFrameOutline) {
-                        obj.setAlpha(playerIndex, this.calculateCutawayOutlineAlpha(playerIndex, false));
+                        obj.setAlpha(playerIndex, this.calculateCutawayOutlineAlpha(playerIndex, GridSquareEdgeFacingDirection.EAST_WEST));
                     }
 
                     texdModifier.col[0] = coll2;
@@ -3651,7 +3543,7 @@ public final class IsoGridSquare {
      * @param north is the item we're trying to place facing north or not
      */
     public boolean hasFloor(boolean north) {
-        if (this.properties.has(IsoFlagType.solidfloor)) {
+        if (this.hasFloor()) {
             return true;
         }
 
@@ -3687,544 +3579,259 @@ public final class IsoGridSquare {
         return !bCountOtherCharacters || this.movingObjects.isEmpty();
     }
 
-    public IsoObject getDoor(boolean north) {
-        for (int n = 0; n < this.specialObjects.size(); n++) {
-            IsoObject special = this.specialObjects.get(n);
-            if (special instanceof IsoThumpable thump && thump.isDoor() && north == thump.north) {
-                return thump;
+    public <T> T getEdgeElement(
+        GridSquareEdge alongEdge, BiFunction<IsoGridSquare, GridSquareEdgeFacingDirection, T> facingGetter, IsoGridSquare.GetSquare getSquare
+    ) {
+        return (T)(switch (alongEdge) {
+            case NORTH -> facingGetter.apply(this, GridSquareEdgeFacingDirection.NORTH_SOUTH);
+            case WEST -> facingGetter.apply(this, GridSquareEdgeFacingDirection.EAST_WEST);
+            case SOUTH -> {
+                IsoGridSquare north = this.getSouth(getSquare);
+                yield north != null ? facingGetter.apply(north, GridSquareEdgeFacingDirection.NORTH_SOUTH) : null;
             }
-
-            if (special instanceof IsoDoor door && north == door.north) {
-                return door;
+            case EAST -> {
+                IsoGridSquare east = this.getEast(getSquare);
+                yield east != null ? facingGetter.apply(east, GridSquareEdgeFacingDirection.EAST_WEST) : null;
             }
-        }
+        });
+    }
 
-        return null;
+    public boolean isEdgeElement(
+        GridSquareEdge alongEdge, BiPredicate<IsoGridSquare, GridSquareEdgeFacingDirection> facingGetter, IsoGridSquare.GetSquare getSquare
+    ) {
+        return switch (alongEdge) {
+            case NORTH -> facingGetter.test(this, GridSquareEdgeFacingDirection.NORTH_SOUTH);
+            case WEST -> facingGetter.test(this, GridSquareEdgeFacingDirection.EAST_WEST);
+            case SOUTH -> {
+                IsoGridSquare north = this.getSouth(getSquare);
+                yield north != null && facingGetter.test(north, GridSquareEdgeFacingDirection.NORTH_SOUTH);
+            }
+            case EAST -> {
+                IsoGridSquare east = this.getEast(getSquare);
+                yield east != null && facingGetter.test(east, GridSquareEdgeFacingDirection.EAST_WEST);
+            }
+        };
+    }
+
+    public <T> T getEdgeElementTo(
+        IsoGridSquare next, TriFunction<IsoGridSquare, GridSquareEdge, IsoGridSquare.GetSquare, T> edgeGetter, IsoGridSquare.GetSquare getSquare
+    ) {
+        T foundElementObj;
+        return next == null
+                || next == this
+                || (
+                        !this.isEastOf(next)
+                            || (foundElementObj = edgeGetter.apply(this, GridSquareEdge.WEST, getSquare)) == null
+                                && (foundElementObj = edgeGetter.apply(next, GridSquareEdge.EAST, getSquare)) == null
+                    )
+                    && (
+                        !this.isWestOf(next)
+                            || (foundElementObj = edgeGetter.apply(next, GridSquareEdge.WEST, getSquare)) == null
+                                && (foundElementObj = edgeGetter.apply(this, GridSquareEdge.EAST, getSquare)) == null
+                    )
+                    && (
+                        !this.isNorthOf(next)
+                            || (foundElementObj = edgeGetter.apply(next, GridSquareEdge.NORTH, getSquare)) == null
+                                && (foundElementObj = edgeGetter.apply(this, GridSquareEdge.SOUTH, getSquare)) == null
+                    )
+                    && (
+                        !this.isSouthOf(next)
+                            || (foundElementObj = edgeGetter.apply(this, GridSquareEdge.NORTH, getSquare)) == null
+                                && (foundElementObj = edgeGetter.apply(next, GridSquareEdge.SOUTH, getSquare)) == null
+                    )
+            ? null
+            : foundElementObj;
+    }
+
+    public boolean isEdgeElementTo(
+        IsoGridSquare other, TriPredicate<IsoGridSquare, GridSquareEdge, IsoGridSquare.GetSquare> facingGetter, IsoGridSquare.GetSquare getSquare
+    ) {
+        return other != null
+            && other != this
+            && (
+                this.isEastOf(other) && (facingGetter.test(this, GridSquareEdge.WEST, getSquare) || facingGetter.test(other, GridSquareEdge.EAST, getSquare))
+                    || this.isWestOf(other)
+                        && (facingGetter.test(other, GridSquareEdge.WEST, getSquare) || facingGetter.test(this, GridSquareEdge.EAST, getSquare))
+                    || this.isSouthOf(other)
+                        && (facingGetter.test(this, GridSquareEdge.NORTH, getSquare) || facingGetter.test(other, GridSquareEdge.SOUTH, getSquare))
+                    || this.isNorthOf(other)
+                        && (facingGetter.test(other, GridSquareEdge.NORTH, getSquare) || facingGetter.test(this, GridSquareEdge.SOUTH, getSquare))
+            );
+    }
+
+    public <T> boolean isAdjacentToEdgeElement(BiFunction<IsoGridSquare, GridSquareEdge, T> edgeGetter) {
+        return edgeGetter.apply(this, GridSquareEdge.NORTH) != null
+            || edgeGetter.apply(this, GridSquareEdge.WEST) != null
+            || edgeGetter.apply(this, GridSquareEdge.EAST) != null
+            || edgeGetter.apply(this, GridSquareEdge.SOUTH) != null;
+    }
+
+    public IsoObject getDoor(GridSquareEdgeFacingDirection facingDirection) {
+        return this.findSpecialObject(IsoObject.class, IsoGridSquare::isDoor, facingDirection);
+    }
+
+    public IsoObject getDoor(GridSquareEdge alongEdge) {
+        return this.getDoor(alongEdge, cellGetSquare);
+    }
+
+    public IsoObject getDoor(GridSquareEdge alongEdge, IsoGridSquare.GetSquare getSquare) {
+        return this.getEdgeElement(alongEdge, IsoGridSquare::getDoor, getSquare);
+    }
+
+    private static boolean isDoor(IsoObject obj, GridSquareEdgeFacingDirection direction) {
+        return isEdgeElement(obj, direction) && (obj instanceof IsoDoor || obj instanceof IsoThumpable thump && thump.isDoor());
+    }
+
+    private static boolean isEdgeElement(IsoObject obj, GridSquareEdgeFacingDirection direction) {
+        return obj instanceof GridSquareEdgeElement edgeElement && edgeElement.getGridSquareEdgeFacingDirection() == direction;
     }
 
     public IsoDoor getIsoDoor() {
-        for (int n = 0; n < this.specialObjects.size(); n++) {
-            IsoObject special = this.specialObjects.get(n);
-            if (special instanceof IsoDoor isoDoor) {
-                return isoDoor;
-            }
-        }
-
-        return null;
+        return this.findSpecialObject(IsoDoor.class);
     }
 
     /**
      * Get the door between this grid and the next in parameter
      */
     public IsoObject getDoorTo(IsoGridSquare next) {
-        if (next != null && next != this) {
-            if (next.x < this.x) {
-                IsoObject o = this.getDoor(false);
-                if (o != null) {
-                    return o;
-                }
-            }
-
-            if (next.y < this.y) {
-                IsoObject o = this.getDoor(true);
-                if (o != null) {
-                    return o;
-                }
-            }
-
-            if (next.x > this.x) {
-                IsoObject o = next.getDoor(false);
-                if (o != null) {
-                    return o;
-                }
-            }
-
-            if (next.y > this.y) {
-                IsoObject o = next.getDoor(true);
-                if (o != null) {
-                    return o;
-                }
-            }
-
-            if (next.x != this.x && next.y != this.y) {
-                IsoGridSquare betweenA = this.getCell().getGridSquare(this.x, next.y, this.z);
-                IsoGridSquare betweenB = this.getCell().getGridSquare(next.x, this.y, this.z);
-                IsoObject o = this.getDoorTo(betweenA);
-                if (o != null) {
-                    return o;
-                }
-
-                o = this.getDoorTo(betweenB);
-                if (o != null) {
-                    return o;
-                }
-
-                o = next.getDoorTo(betweenA);
-                if (o != null) {
-                    return o;
-                }
-
-                o = next.getDoorTo(betweenB);
-                if (o != null) {
-                    return o;
-                }
-            }
-
-            return null;
-        } else {
-            return null;
-        }
+        return this.getDoorTo(next, cellGetSquare);
     }
 
-    public IsoWindow getWindow(boolean north) {
-        for (int n = 0; n < this.specialObjects.size(); n++) {
-            IsoObject special = this.specialObjects.get(n);
-            if (special instanceof IsoWindow window && north == window.isNorth()) {
-                return window;
-            }
-        }
+    public IsoObject getDoorTo(IsoGridSquare next, IsoGridSquare.GetSquare getSquare) {
+        return this.getEdgeElementTo(next, IsoGridSquare::getDoor, getSquare);
+    }
 
-        return null;
+    public IsoWindow getWindow(GridSquareEdgeFacingDirection facingDirection) {
+        return this.findEdgeSpecialObject(IsoWindow.class, facingDirection);
+    }
+
+    public IsoWindow getWindow(GridSquareEdge alongEdge) {
+        return this.getWindow(alongEdge, cellGetSquare);
+    }
+
+    public IsoWindow getWindow(GridSquareEdge alongEdge, IsoGridSquare.GetSquare getSquare) {
+        return this.getEdgeElement(alongEdge, IsoGridSquare::getWindow, getSquare);
     }
 
     public IsoWindow getWindow() {
-        for (int n = 0; n < this.specialObjects.size(); n++) {
-            IsoObject special = this.specialObjects.get(n);
-            if (special instanceof IsoWindow isoWindow) {
-                return isoWindow;
-            }
-        }
-
-        return null;
+        return this.findSpecialObject(IsoWindow.class);
     }
 
     /**
      * Get the IsoWindow window between this grid and the next in parameter
      */
     public IsoWindow getWindowTo(IsoGridSquare next) {
-        if (next != null && next != this) {
-            if (next.x < this.x) {
-                IsoWindow o = this.getWindow(false);
-                if (o != null) {
-                    return o;
-                }
-            }
+        return this.getWindowTo(next, cellGetSquare);
+    }
 
-            if (next.y < this.y) {
-                IsoWindow o = this.getWindow(true);
-                if (o != null) {
-                    return o;
-                }
-            }
-
-            if (next.x > this.x) {
-                IsoWindow o = next.getWindow(false);
-                if (o != null) {
-                    return o;
-                }
-            }
-
-            if (next.y > this.y) {
-                IsoWindow o = next.getWindow(true);
-                if (o != null) {
-                    return o;
-                }
-            }
-
-            if (next.x != this.x && next.y != this.y) {
-                IsoGridSquare betweenA = this.getCell().getGridSquare(this.x, next.y, this.z);
-                IsoGridSquare betweenB = this.getCell().getGridSquare(next.x, this.y, this.z);
-                IsoWindow o = this.getWindowTo(betweenA);
-                if (o != null) {
-                    return o;
-                }
-
-                o = this.getWindowTo(betweenB);
-                if (o != null) {
-                    return o;
-                }
-
-                o = next.getWindowTo(betweenA);
-                if (o != null) {
-                    return o;
-                }
-
-                o = next.getWindowTo(betweenB);
-                if (o != null) {
-                    return o;
-                }
-            }
-
-            return null;
-        } else {
-            return null;
-        }
+    public IsoWindow getWindowTo(IsoGridSquare next, IsoGridSquare.GetSquare getSquare) {
+        return this.getEdgeElementTo(next, IsoGridSquare::getWindow, getSquare);
     }
 
     public boolean isAdjacentToWindow() {
-        if (this.getWindow() != null) {
-            return true;
-        }
-
-        if (this.hasWindowFrame()) {
-            return true;
-        }
-
-        if (this.getThumpableWindow(false) == null && this.getThumpableWindow(true) == null) {
-            IsoGridSquare s = this.nav[IsoDirections.S.ordinal()];
-            if (s == null || s.getWindow(true) == null && s.getWindowFrame(true) == null && s.getThumpableWindow(true) == null) {
-                IsoGridSquare e = this.nav[IsoDirections.E.ordinal()];
-                return e != null && (e.getWindow(false) != null || e.getWindowFrame(false) != null || e.getThumpableWindow(false) != null);
-            } else {
-                return true;
-            }
-        } else {
-            return true;
-        }
+        return this.isAdjacentToEdgeElement(IsoGridSquare::getWindow)
+            || this.isAdjacentToEdgeElement(IsoGridSquare::getThumpableWindow)
+            || this.isAdjacentToEdgeElement(IsoGridSquare::getWindowFrame);
     }
 
     public boolean isAdjacentToHoppable() {
-        if (this.getHoppable(true) != null || this.getHoppable(false) != null) {
-            return true;
-        }
-
-        if (this.getHoppableThumpable(true) == null && this.getHoppableThumpable(false) == null) {
-            IsoGridSquare s = this.nav[IsoDirections.S.ordinal()];
-            if (s == null || s.getHoppable(true) == null && s.getHoppableThumpable(true) == null) {
-                IsoGridSquare e = this.nav[IsoDirections.E.ordinal()];
-                return e != null && (e.getHoppable(false) != null || e.getHoppableThumpable(false) != null);
-            } else {
-                return true;
-            }
-        } else {
-            return true;
-        }
+        return this.isAdjacentToEdgeElement(IsoGridSquare::getHoppableOrWindowFrame) || this.isAdjacentToEdgeElement(IsoGridSquare::getHoppableThumpable);
     }
 
-    public IsoThumpable getThumpableWindow(boolean north) {
-        for (int n = 0; n < this.specialObjects.size(); n++) {
-            IsoObject special = this.specialObjects.get(n);
-            if (special instanceof IsoThumpable thump && thump.isWindow() && north == thump.north) {
-                return thump;
-            }
-        }
+    private IsoThumpable getThumpableWindow(GridSquareEdgeFacingDirection facingDirection) {
+        return this.findSpecialObject(IsoThumpable.class, IsoGridSquare::isThumpableWindow, facingDirection);
+    }
 
-        return null;
+    private static boolean isThumpableWindow(IsoThumpable thump, GridSquareEdgeFacingDirection facingDirection) {
+        return thump.isWindow() && thump.getGridSquareEdgeFacingDirection() == facingDirection;
+    }
+
+    public IsoThumpable getThumpableWindow(GridSquareEdge alongEdge) {
+        return this.getThumpableWindow(alongEdge, cellGetSquare);
+    }
+
+    public IsoThumpable getThumpableWindow(GridSquareEdge alongEdge, IsoGridSquare.GetSquare getSquare) {
+        return this.getEdgeElement(alongEdge, IsoGridSquare::getThumpableWindow, getSquare);
     }
 
     /**
      * Get the IsoThumpable window between this grid and the next in parameter
      */
     public IsoThumpable getWindowThumpableTo(IsoGridSquare next) {
-        if (next != null && next != this) {
-            if (next.x < this.x) {
-                IsoThumpable o = this.getThumpableWindow(false);
-                if (o != null) {
-                    return o;
-                }
-            }
-
-            if (next.y < this.y) {
-                IsoThumpable o = this.getThumpableWindow(true);
-                if (o != null) {
-                    return o;
-                }
-            }
-
-            if (next.x > this.x) {
-                IsoThumpable o = next.getThumpableWindow(false);
-                if (o != null) {
-                    return o;
-                }
-            }
-
-            if (next.y > this.y) {
-                IsoThumpable o = next.getThumpableWindow(true);
-                if (o != null) {
-                    return o;
-                }
-            }
-
-            if (next.x != this.x && next.y != this.y) {
-                IsoGridSquare betweenA = this.getCell().getGridSquare(this.x, next.y, this.z);
-                IsoGridSquare betweenB = this.getCell().getGridSquare(next.x, this.y, this.z);
-                IsoThumpable o = this.getWindowThumpableTo(betweenA);
-                if (o != null) {
-                    return o;
-                }
-
-                o = this.getWindowThumpableTo(betweenB);
-                if (o != null) {
-                    return o;
-                }
-
-                o = next.getWindowThumpableTo(betweenA);
-                if (o != null) {
-                    return o;
-                }
-
-                o = next.getWindowThumpableTo(betweenB);
-                if (o != null) {
-                    return o;
-                }
-            }
-
-            return null;
-        } else {
-            return null;
-        }
+        return this.getWindowThumpableTo(next, cellGetSquare);
     }
 
+    public IsoThumpable getWindowThumpableTo(IsoGridSquare next, IsoGridSquare.GetSquare getSquare) {
+        return this.getEdgeElementTo(next, IsoGridSquare::getThumpableWindow, getSquare);
+    }
+
+    @UsedFromLua
     public IsoThumpable getThumpable(boolean north) {
-        for (int n = 0; n < this.specialObjects.size(); n++) {
-            IsoObject special = this.specialObjects.get(n);
-            if (special instanceof IsoThumpable thump && north == thump.north) {
-                return thump;
-            }
-        }
-
-        return null;
+        return this.findEdgeSpecialObject(IsoThumpable.class, north ? GridSquareEdgeFacingDirection.NORTH_SOUTH : GridSquareEdgeFacingDirection.EAST_WEST);
     }
 
-    public IsoThumpable getHoppableThumpable(boolean north) {
-        for (int n = 0; n < this.specialObjects.size(); n++) {
-            IsoObject special = this.specialObjects.get(n);
-            if (special instanceof IsoThumpable thump && thump.isHoppable() && north == thump.north) {
-                return thump;
-            }
-        }
+    private IsoThumpable getHoppableThumpable(GridSquareEdgeFacingDirection facingDirection) {
+        return this.findSpecialObject(IsoThumpable.class, IsoGridSquare::isHoppableThumpable, facingDirection);
+    }
 
-        return null;
+    private static boolean isHoppableThumpable(IsoThumpable thump, GridSquareEdgeFacingDirection facingDirection) {
+        return thump.isHoppable() && thump.getGridSquareEdgeFacingDirection() == facingDirection;
+    }
+
+    public IsoThumpable getHoppableThumpable(GridSquareEdge alongEdge) {
+        return this.getHoppableThumpable(alongEdge, cellGetSquare);
+    }
+
+    public IsoThumpable getHoppableThumpable(GridSquareEdge alongEdge, IsoGridSquare.GetSquare getSquare) {
+        return this.getEdgeElement(alongEdge, IsoGridSquare::getHoppableThumpable, getSquare);
     }
 
     public IsoThumpable getHoppableThumpableTo(IsoGridSquare next) {
-        if (next != null && next != this) {
-            if (next.x < this.x) {
-                IsoThumpable o = this.getHoppableThumpable(false);
-                if (o != null) {
-                    return o;
-                }
-            }
-
-            if (next.y < this.y) {
-                IsoThumpable o = this.getHoppableThumpable(true);
-                if (o != null) {
-                    return o;
-                }
-            }
-
-            if (next.x > this.x) {
-                IsoThumpable o = next.getHoppableThumpable(false);
-                if (o != null) {
-                    return o;
-                }
-            }
-
-            if (next.y > this.y) {
-                IsoThumpable o = next.getHoppableThumpable(true);
-                if (o != null) {
-                    return o;
-                }
-            }
-
-            if (next.x != this.x && next.y != this.y) {
-                IsoGridSquare betweenA = this.getCell().getGridSquare(this.x, next.y, this.z);
-                IsoGridSquare betweenB = this.getCell().getGridSquare(next.x, this.y, this.z);
-                IsoThumpable o = this.getHoppableThumpableTo(betweenA);
-                if (o != null) {
-                    return o;
-                }
-
-                o = this.getHoppableThumpableTo(betweenB);
-                if (o != null) {
-                    return o;
-                }
-
-                o = next.getHoppableThumpableTo(betweenA);
-                if (o != null) {
-                    return o;
-                }
-
-                o = next.getHoppableThumpableTo(betweenB);
-                if (o != null) {
-                    return o;
-                }
-            }
-
-            return null;
-        } else {
-            return null;
-        }
+        return this.getEdgeElementTo(next, IsoGridSquare::getHoppableThumpable, cellGetSquare);
     }
 
-    public IsoObject getWallHoppable(boolean north) {
-        for (int i = 0; i < this.objects.size(); i++) {
-            if (this.objects.get(i).isHoppable() && north == this.objects.get(i).isNorthHoppable()) {
-                return this.objects.get(i);
-            }
-        }
+    public IsoObject getWallHoppable(GridSquareEdgeFacingDirection facingDirection) {
+        return this.findObject(IsoObject.class, IsoObject::isHoppable, facingDirection);
+    }
 
-        return null;
+    public IsoObject getWallHoppable(GridSquareEdge alongEdge) {
+        return this.getWallHoppable(alongEdge, cellGetSquare);
+    }
+
+    public IsoObject getWallHoppable(GridSquareEdge alongEdge, IsoGridSquare.GetSquare getSquare) {
+        return this.getEdgeElement(alongEdge, IsoGridSquare::getWallHoppable, getSquare);
     }
 
     public IsoObject getWallHoppableTo(IsoGridSquare next) {
-        if (next != null && next != this) {
-            if (next.x < this.x) {
-                IsoObject o = this.getWallHoppable(false);
-                if (o != null) {
-                    return o;
-                }
-            }
-
-            if (next.y < this.y) {
-                IsoObject o = this.getWallHoppable(true);
-                if (o != null) {
-                    return o;
-                }
-            }
-
-            if (next.x > this.x) {
-                IsoObject o = next.getWallHoppable(false);
-                if (o != null) {
-                    return o;
-                }
-            }
-
-            if (next.y > this.y) {
-                IsoObject o = next.getWallHoppable(true);
-                if (o != null) {
-                    return o;
-                }
-            }
-
-            if (next.x != this.x && next.y != this.y) {
-                IsoGridSquare betweenA = this.getCell().getGridSquare(this.x, next.y, this.z);
-                IsoGridSquare betweenB = this.getCell().getGridSquare(next.x, this.y, this.z);
-                IsoObject o = this.getWallHoppableTo(betweenA);
-                if (o != null) {
-                    return o;
-                }
-
-                o = this.getWallHoppableTo(betweenB);
-                if (o != null) {
-                    return o;
-                }
-
-                o = next.getWallHoppableTo(betweenA);
-                if (o != null) {
-                    return o;
-                }
-
-                o = next.getWallHoppableTo(betweenB);
-                if (o != null) {
-                    return o;
-                }
-            }
-
-            return null;
-        } else {
-            return null;
-        }
+        return this.getWallHoppableTo(next, cellGetSquare);
     }
 
-    public IsoObject getBedTo(IsoGridSquare next) {
-        ArrayList<IsoObject> special;
-        if (next.y >= this.y && next.x >= this.x) {
-            special = next.specialObjects;
-        } else {
-            special = this.specialObjects;
-        }
-
-        for (int n = 0; n < special.size(); n++) {
-            IsoObject bed = special.get(n);
-            if (bed.getProperties().has(IsoFlagType.bed)) {
-                return bed;
-            }
-        }
-
-        return null;
+    public IsoObject getWallHoppableTo(IsoGridSquare next, IsoGridSquare.GetSquare getSquare) {
+        return this.getEdgeElementTo(next, IsoGridSquare::getWallHoppable, getSquare);
     }
 
-    public IsoWindowFrame getWindowFrame(boolean north) {
-        for (int n = 0; n < this.objects.size(); n++) {
-            IsoObject obj = this.objects.get(n);
-            if (obj instanceof IsoWindowFrame windowFrame && windowFrame.getNorth() == north) {
-                return windowFrame;
-            }
-        }
+    public IsoWindowFrame getWindowFrame(GridSquareEdgeFacingDirection edgeFacingDirection) {
+        return this.findEdgeObject(IsoWindowFrame.class, edgeFacingDirection);
+    }
 
-        return null;
+    public IsoWindowFrame getWindowFrame(GridSquareEdge alongEdge) {
+        return this.getWindowFrame(alongEdge, cellGetSquare);
+    }
+
+    public IsoWindowFrame getWindowFrame(GridSquareEdge alongEdge, IsoGridSquare.GetSquare getSquare) {
+        return this.getEdgeElement(alongEdge, IsoGridSquare::getWindowFrame, getSquare);
     }
 
     public IsoWindowFrame getWindowFrameTo(IsoGridSquare next) {
-        if (next != null && next != this) {
-            if (next.x < this.x) {
-                IsoWindowFrame o = this.getWindowFrame(false);
-                if (o != null) {
-                    return o;
-                }
-            }
+        return this.getWindowFrameTo(next, cellGetSquare);
+    }
 
-            if (next.y < this.y) {
-                IsoWindowFrame o = this.getWindowFrame(true);
-                if (o != null) {
-                    return o;
-                }
-            }
-
-            if (next.x > this.x) {
-                IsoWindowFrame o = next.getWindowFrame(false);
-                if (o != null) {
-                    return o;
-                }
-            }
-
-            if (next.y > this.y) {
-                IsoWindowFrame o = next.getWindowFrame(true);
-                if (o != null) {
-                    return o;
-                }
-            }
-
-            if (next.x != this.x && next.y != this.y) {
-                IsoGridSquare betweenA = this.getCell().getGridSquare(this.x, next.y, this.z);
-                IsoGridSquare betweenB = this.getCell().getGridSquare(next.x, this.y, this.z);
-                IsoWindowFrame o = this.getWindowFrameTo(betweenA);
-                if (o != null) {
-                    return o;
-                }
-
-                o = this.getWindowFrameTo(betweenB);
-                if (o != null) {
-                    return o;
-                }
-
-                o = next.getWindowFrameTo(betweenA);
-                if (o != null) {
-                    return o;
-                }
-
-                o = next.getWindowFrameTo(betweenB);
-                if (o != null) {
-                    return o;
-                }
-            }
-
-            return null;
-        } else {
-            return null;
-        }
+    public IsoWindowFrame getWindowFrameTo(IsoGridSquare next, IsoGridSquare.GetSquare getSquare) {
+        return this.getEdgeElementTo(next, IsoGridSquare::getWindowFrame, getSquare);
     }
 
     public boolean hasWindowFrame() {
-        for (int n = 0; n < this.objects.size(); n++) {
-            IsoObject obj = this.objects.get(n);
-            if (obj instanceof IsoWindowFrame) {
-                return true;
-            }
-        }
-
-        return false;
+        return this.findObject(IsoWindowFrame.class) != null;
     }
 
     public boolean hasWindowOrWindowFrame() {
@@ -4268,7 +3875,7 @@ public final class IsoGridSquare {
         }
 
         if ((!north || this.has(IsoFlagType.WindowN)) && (north || this.has(IsoFlagType.WindowW))) {
-            IsoObject obj = this.getWindowFrame(north);
+            IsoObject obj = this.getWindowFrame(north ? GridSquareEdgeFacingDirection.NORTH_SOUTH : GridSquareEdgeFacingDirection.EAST_WEST);
             return obj != null ? obj : null;
         } else {
             return null;
@@ -4286,57 +3893,66 @@ public final class IsoGridSquare {
         return null;
     }
 
-    public boolean damageSpriteSheetRopeFromBottom(IsoPlayer player, boolean north) {
-        IsoGridSquare sq = this;
-        IsoFlagType type2;
-        if (north) {
-            if (this.has(IsoFlagType.climbSheetN)) {
-                type2 = IsoFlagType.climbSheetN;
+    public void damageSpriteSheetRopeFromBottom() {
+        IsoObject sheetRope = this.getSheetRope();
+        if (sheetRope != null && !(sheetRope.sheetRopeHealth >= 40.0F)) {
+            if (sheetRope.sheetRopeHealth <= 0.0F) {
+                this.removeSheetRopeFromBottom();
             } else {
-                if (!this.has(IsoFlagType.climbSheetS)) {
-                    return false;
-                }
+                boolean north = this.has(IsoFlagType.climbSheetN) || this.has(IsoFlagType.climbSheetS);
+                IsoGridSquare sq = this;
+                IsoFlagType type2;
+                if (north) {
+                    if (this.has(IsoFlagType.climbSheetN)) {
+                        type2 = IsoFlagType.climbSheetN;
+                    } else {
+                        if (!this.has(IsoFlagType.climbSheetS)) {
+                            return;
+                        }
 
-                type2 = IsoFlagType.climbSheetS;
-            }
-        } else if (this.has(IsoFlagType.climbSheetW)) {
-            type2 = IsoFlagType.climbSheetW;
-        } else {
-            if (!this.has(IsoFlagType.climbSheetE)) {
-                return false;
-            }
-
-            type2 = IsoFlagType.climbSheetE;
-        }
-
-        while (sq != null) {
-            for (int i = 0; i < sq.getObjects().size(); i++) {
-                IsoObject o = sq.getObjects().get(i);
-                if (o.getProperties() != null && o.getProperties().has(type2)) {
-                    int index = Integer.parseInt(o.getSprite().getName().split("_")[2]);
-                    if (index > 14) {
-                        return false;
+                        type2 = IsoFlagType.climbSheetS;
+                    }
+                } else if (this.has(IsoFlagType.climbSheetW)) {
+                    type2 = IsoFlagType.climbSheetW;
+                } else {
+                    if (!this.has(IsoFlagType.climbSheetE)) {
+                        return;
                     }
 
-                    String spriteName = o.getSprite().getName().split("_")[0] + "_" + o.getSprite().getName().split("_")[1];
-                    index += 40;
-                    o.setSprite(IsoSpriteManager.instance.getSprite(spriteName + "_" + index));
-                    o.transmitUpdatedSprite();
-                    break;
+                    type2 = IsoFlagType.climbSheetE;
                 }
-            }
 
-            if (sq.getZ() == 7) {
-                break;
-            }
+                while (sq != null) {
+                    for (int i = 0; i < sq.getObjects().size(); i++) {
+                        IsoObject o = sq.getObjects().get(i);
+                        if (o.getProperties() != null && o.getProperties().has(type2)) {
+                            int index = Integer.parseInt(o.getSprite().getName().split("_")[2]);
+                            if (index > 14) {
+                                return;
+                            }
 
-            sq = sq.getCell().getGridSquare(sq.getX(), sq.getY(), sq.getZ() + 1);
+                            String spriteName = o.getSprite().getName().split("_")[0] + "_" + o.getSprite().getName().split("_")[1];
+                            index += 40;
+                            o.setSprite(IsoSpriteManager.instance.getSprite(spriteName + "_" + index));
+                            o.transmitUpdatedSprite();
+                            break;
+                        }
+                    }
+
+                    if (sq.getZ() == 7) {
+                        break;
+                    }
+
+                    sq = sq.getCell().getGridSquare(sq.getX(), sq.getY(), sq.getZ() + 1);
+                }
+
+                this.RecalcProperties();
+            }
         }
-
-        return true;
     }
 
-    public boolean removeSheetRopeFromBottom(IsoPlayer player, boolean north) {
+    private void removeSheetRopeFromBottom() {
+        boolean north = this.has(IsoFlagType.climbSheetN) || this.has(IsoFlagType.climbSheetS);
         IsoGridSquare sq = this;
         IsoFlagType type1;
         IsoFlagType type2;
@@ -4346,7 +3962,7 @@ public final class IsoGridSquare {
                 type2 = IsoFlagType.climbSheetN;
             } else {
                 if (!this.has(IsoFlagType.climbSheetS)) {
-                    return false;
+                    return;
                 }
 
                 type1 = IsoFlagType.climbSheetTopS;
@@ -4366,7 +3982,7 @@ public final class IsoGridSquare {
             type2 = IsoFlagType.climbSheetW;
         } else {
             if (!this.has(IsoFlagType.climbSheetE)) {
-                return false;
+                return;
             }
 
             type1 = IsoFlagType.climbSheetTopE;
@@ -4392,13 +4008,6 @@ public final class IsoGridSquare {
                     previousSq = sq;
                     find = true;
                     sq.transmitRemoveItemFromSquare(o);
-                    if (GameServer.server) {
-                        if (player != null) {
-                            player.sendObjectChange(IsoObjectChange.ADD_ITEM_OF_TYPE, "type", o.getName());
-                        }
-                    } else if (player != null) {
-                        player.getInventory().AddItem(o.getName());
-                    }
                     break;
                 }
             }
@@ -4415,7 +4024,7 @@ public final class IsoGridSquare {
             sq = previousSq.getCell().getGridSquare(previousSq.getX(), previousSq.getY(), previousSq.getZ());
             IsoGridSquare topSq = north ? sq.nav[IsoDirections.S.ordinal()] : sq.nav[IsoDirections.E.ordinal()];
             if (topSq == null) {
-                return true;
+                return;
             }
 
             for (int i = 0; i < topSq.getObjects().size(); i++) {
@@ -4426,8 +4035,6 @@ public final class IsoGridSquare {
                 }
             }
         }
-
-        return true;
     }
 
     private IsoObject getSpecialSolid() {
@@ -4711,39 +4318,6 @@ public final class IsoGridSquare {
         } else {
             return null;
         }
-    }
-
-    public IsoObject getDoorFrameTo(IsoGridSquare next) {
-        ArrayList<IsoObject> special;
-        if (next.y >= this.y && next.x >= this.x) {
-            special = next.specialObjects;
-        } else {
-            special = this.specialObjects;
-        }
-
-        for (int n = 0; n < special.size(); n++) {
-            if (special.get(n) instanceof IsoDoor door) {
-                boolean no = door.north;
-                if (no && next.y != this.y) {
-                    return door;
-                }
-
-                if (!no && next.x != this.x) {
-                    return door;
-                }
-            } else if (special.get(n) instanceof IsoThumpable door && ((IsoThumpable)special.get(n)).isDoor()) {
-                boolean no = door.north;
-                if (no && next.y != this.y) {
-                    return door;
-                }
-
-                if (!no && next.x != this.x) {
-                    return door;
-                }
-            }
-        }
-
-        return null;
     }
 
     public static void getSquaresForThread(ArrayDeque<IsoGridSquare> isoGridSquareCacheDest, int count) {
@@ -5450,10 +5024,6 @@ public final class IsoGridSquare {
         }
 
         return obj;
-    }
-
-    void ReCalculateAll(IsoGridSquare a) {
-        this.ReCalculateAll(a, cellGetSquare);
     }
 
     void ReCalculateAll(IsoGridSquare a, IsoGridSquare.GetSquare getter) {
@@ -6446,51 +6016,35 @@ public final class IsoGridSquare {
     }
 
     public int transmitRemoveItemFromSquare(IsoObject obj, boolean safelyRemove) {
-        if (obj != null && this.objects.contains(obj)) {
-            if (GameClient.client) {
-                try {
-                    GameClient.instance.checkAddedRemovedItems(obj);
-                } catch (Exception ex) {
-                    GameClient.connection.cancelPacket();
-                    ExceptionLogger.logException(ex);
-                }
+        if (obj == null || !this.objects.contains(obj)) {
+            return -1;
+        }
 
-                RemoveItemFromSquarePacket packet = new RemoveItemFromSquarePacket();
-                packet.set(obj);
-                ByteBufferWriter b = GameClient.connection.startPacket();
-                PacketTypes.PacketType.RemoveItemFromSquare.doPacket(b);
-                packet.write(b);
-                PacketTypes.PacketType.RemoveItemFromSquare.send(GameClient.connection);
-            }
+        if (!GameServer.server) {
+            return this.RemoveTileObject(obj, safelyRemove);
+        }
 
-            if (!GameServer.server) {
-                return this.RemoveTileObject(obj, safelyRemove);
-            }
+        if (safelyRemove && IsoObjectUtils.isObjectMultiSquare(obj)) {
+            ArrayList<IsoObject> objects = new ArrayList<>();
+            if (IsoObjectUtils.getAllMultiTileObjects(obj, objects)) {
+                int objectIndex = -1;
 
-            if (safelyRemove && IsoObjectUtils.isObjectMultiSquare(obj)) {
-                ArrayList<IsoObject> objects = new ArrayList<>();
-                if (IsoObjectUtils.getAllMultiTileObjects(obj, objects)) {
-                    int objectIndex = -1;
-
-                    for (IsoObject object2 : objects) {
-                        IsoGridSquare sq = object2.square;
-                        if (sq != null) {
-                            int idx = GameServer.RemoveItemFromMap(object2);
-                            if (obj == object2) {
-                                objectIndex = idx;
-                            }
+                for (IsoObject object2 : objects) {
+                    IsoGridSquare sq = object2.square;
+                    if (sq != null) {
+                        int idx = GameServer.RemoveItemFromMap(object2);
+                        if (obj == object2) {
+                            objectIndex = idx;
                         }
                     }
-
-                    return objectIndex;
-                } else {
-                    return -1;
                 }
+
+                return objectIndex;
             } else {
-                return GameServer.RemoveItemFromMap(obj);
+                return -1;
             }
         } else {
-            return -1;
+            return GameServer.RemoveItemFromMap(obj);
         }
     }
 
@@ -6625,6 +6179,8 @@ public final class IsoGridSquare {
                 animal.addToWorld();
                 animal.attachBackToMotherTimer = 10000.0F;
                 animal.setSquare(this);
+                animal.setCurrent(this);
+                animal.setMovingSquareNow();
                 animal.playBreedSound("put_down");
                 AnimalSoundState ass = animal.getAnimalSoundState("voice");
                 if (ass != null && animal.getBreed() != null) {
@@ -7250,7 +6806,7 @@ public final class IsoGridSquare {
                 boolean isAtTopStair = currentStairs == IsoObjectType.stairsTN || currentStairs == IsoObjectType.stairsTW;
                 boolean isTargetingTopStair = targetStairs == IsoObjectType.stairsTN || targetStairs == IsoObjectType.stairsTW;
                 boolean isTopStairFloorTransition = isAtTopStair && !hasTargetStairs || !hasCurrentStairs && isTargetingTopStair;
-                if (isSameLevel && this.isWallTo(gridSquare) && !isTopStairFloorTransition) {
+                if (isSameLevel && this.isWallTo(gridSquare, getter) && !isTopStairFloorTransition) {
                     return true;
                 }
 
@@ -7564,10 +7120,6 @@ public final class IsoGridSquare {
         } else {
             return true;
         }
-    }
-
-    public boolean CalculateVisionBlocked(IsoGridSquare gridSquare) {
-        return this.CalculateVisionBlocked(gridSquare, cellGetSquare);
     }
 
     public boolean CalculateVisionBlocked(IsoGridSquare gridSquare, IsoGridSquare.GetSquare getter) {
@@ -8399,7 +7951,7 @@ public final class IsoGridSquare {
             ? new IsoDirections[]{IsoDirections.N, IsoDirections.S}
             : new IsoDirections[]{IsoDirections.W, IsoDirections.E};
 
-        for (int n = 0; n < this.objects.size(); n++) {
+        for (int n = this.objects.size() - 1; n >= 0; n--) {
             IsoObject o = this.objects.get(n);
             if (o.sprite != null) {
                 boolean isAttachedToGlass = o.getProperties().has(IsoPropertyType.ATTACHED_TO_GLASS);
@@ -8408,7 +7960,6 @@ public final class IsoGridSquare {
                 boolean isAttachedToWindowWall = isWallObject && Arrays.stream(windowSides).anyMatch(x -> x == o.getFacing());
                 if (isAttachedToGlass || o instanceof IsoLightSwitch && isAttachedToWindowWall) {
                     this.RemoveTileObject(o);
-                    n--;
                 }
             }
         }
@@ -8468,7 +8019,7 @@ public final class IsoGridSquare {
     }
 
     public void startWaterSplash(boolean isBigSplash, float dx, float dy) {
-        if (this.isSeen(IsoCamera.frameState.playerIndex) && !this.waterSplashData.isSplashNow()) {
+        if (this.isSeenByAnyLocalPlayer() && !this.waterSplashData.isSplashNow()) {
             if (isBigSplash) {
                 this.waterSplashData.initBigSplash(dx, dy);
             } else {
@@ -9122,8 +8673,12 @@ public final class IsoGridSquare {
                             if (sqAtZero != null) {
                                 sqZeroN = sqAtZero.nav[IsoDirections.N.ordinal()];
                                 sqZeroW = sqAtZero.nav[IsoDirections.W.ordinal()];
-                                sqZeroHasWallN = sqAtZero.getWall(true) != null || sqAtZero.getDoor(true) != null || sqAtZero.getWindow(true) != null;
-                                sqZeroHasWallW = sqAtZero.getWall(false) != null || sqAtZero.getDoor(false) != null || sqAtZero.getWindow(false) != null;
+                                sqZeroHasWallN = sqAtZero.getWall(true) != null
+                                    || sqAtZero.getDoor(GridSquareEdgeFacingDirection.NORTH_SOUTH) != null
+                                    || sqAtZero.getWindow(GridSquareEdgeFacingDirection.NORTH_SOUTH) != null;
+                                sqZeroHasWallW = sqAtZero.getWall(false) != null
+                                    || sqAtZero.getDoor(GridSquareEdgeFacingDirection.EAST_WEST) != null
+                                    || sqAtZero.getWindow(GridSquareEdgeFacingDirection.EAST_WEST) != null;
                             }
 
                             boolean roofFadeDist = IsoUtils.DistanceToSquared(
@@ -9141,8 +8696,12 @@ public final class IsoGridSquare {
                                 )) {
                                 sqZeroN = sqAtZero.nav[IsoDirections.N.ordinal()];
                                 sqZeroW = sqAtZero.nav[IsoDirections.W.ordinal()];
-                                sqZeroHasWallN = sqAtZero.getWall(true) != null || sqAtZero.getDoor(true) != null || sqAtZero.getWindow(true) != null;
-                                sqZeroHasWallW = sqAtZero.getWall(false) != null || sqAtZero.getDoor(false) != null || sqAtZero.getWindow(false) != null;
+                                sqZeroHasWallN = sqAtZero.getWall(true) != null
+                                    || sqAtZero.getDoor(GridSquareEdgeFacingDirection.NORTH_SOUTH) != null
+                                    || sqAtZero.getWindow(GridSquareEdgeFacingDirection.NORTH_SOUTH) != null;
+                                sqZeroHasWallW = sqAtZero.getWall(false) != null
+                                    || sqAtZero.getDoor(GridSquareEdgeFacingDirection.EAST_WEST) != null
+                                    || sqAtZero.getWindow(GridSquareEdgeFacingDirection.EAST_WEST) != null;
                             }
 
                             if (t != IsoObjectType.WestRoofB && t != IsoObjectType.WestRoofM && t != IsoObjectType.WestRoofT
@@ -9950,10 +9509,7 @@ public final class IsoGridSquare {
         this.s = s;
     }
 
-    /**
-     * @return the SpecialObjects
-     */
-    public ArrayList<IsoObject> getSpecialObjects() {
+    public List<IsoObject> getSpecialObjects() {
         return this.specialObjects;
     }
 
@@ -10031,6 +9587,16 @@ public final class IsoGridSquare {
      */
     public void setIsSeen(int playerIndex, boolean bSeen) {
         this.lighting[playerIndex].bSeen(bSeen);
+    }
+
+    public boolean isSeenByAnyLocalPlayer() {
+        for (int i = 0; i < IsoPlayer.numPlayers; i++) {
+            if (IsoPlayer.players[i] != null && this.isSeen(i)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -12488,7 +12054,7 @@ public final class IsoGridSquare {
 
         VirtualZombieManager.instance.choices.clear();
         VirtualZombieManager.instance.choices.add(this);
-        IsoZombie zombie = VirtualZombieManager.instance.createRealZombieAlways(IsoDirections.getRandom(), false);
+        IsoZombie zombie = VirtualZombieManager.instance.createCorpseZombie(IsoDirections.getRandom());
         if (zombie != null) {
             zombie.setX(this.x);
             zombie.setY(this.y);
@@ -12524,7 +12090,7 @@ public final class IsoGridSquare {
     }
 
     public IsoDeadBody createCorpse(boolean skeleton) {
-        IsoZombie zombie = VirtualZombieManager.instance.createRealZombieAlways(IsoDirections.getRandom(), false);
+        IsoZombie zombie = VirtualZombieManager.instance.createCorpseZombie(IsoDirections.getRandom());
         return this.createCorpse(zombie, skeleton);
     }
 

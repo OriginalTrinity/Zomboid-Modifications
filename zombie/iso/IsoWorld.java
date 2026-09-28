@@ -283,6 +283,7 @@ import zombie.world.WorldDictionaryException;
 import zombie.world.moddata.GlobalModData;
 import zombie.worldMap.network.HiddenAuthors;
 import zombie.worldMap.network.WorldMapClient;
+import zombie.worldMap.streets.WorldMapStreets;
 
 @UsedFromLua
 public final class IsoWorld {
@@ -432,6 +433,19 @@ public final class IsoWorld {
 
     public Zone registerZone(String name, String type, int x, int y, int z, int width, int height) {
         return this.metaGrid.registerZone(name, type, x, y, z, width, height);
+    }
+
+    @UsedFromLua
+    public void registerNavZones() {
+        ArrayList<String> dirs = LuaManager.GlobalObject.getLotDirectories();
+
+        for (int i = 0; i < dirs.size(); i++) {
+            String file = "media/maps/" + dirs.get(i) + "/streets.xml";
+            if (LuaManager.GlobalObject.fileExists(file)) {
+                WorldMapStreets data = WorldMapStreets.getOrCreateData(file, ZomboidFileSystem.instance.getString(file));
+                data.registerNavZones();
+            }
+        }
     }
 
     @Deprecated
@@ -621,7 +635,7 @@ public final class IsoWorld {
     }
 
     public void LoadTileDefinitions(IsoSpriteManager sprMan, String filename, int fileNumber) {
-        DebugType.DetailedInfo.trace("tiledef: loading " + filename);
+        DebugType.General.trace("tiledef: loading " + filename);
         boolean bPatch = filename.endsWith(".patch.tiles");
         int maxTilesetsPerFile = fileNumber == 1 ? 1024 : 512;
         int maxTilesPerTileset = fileNumber == 1 ? 1024 : 512;
@@ -1360,7 +1374,7 @@ public final class IsoWorld {
     }
 
     public void LoadTileDefinitionsPropertyStrings(IsoSpriteManager sprMan, String filename, int fileNumber) {
-        DebugType.DetailedInfo.trace("tiledef: loading " + filename);
+        DebugType.General.trace("tiledef: loading " + filename);
         if (!GameServer.server) {
             Thread.yield();
             Core.getInstance().DoFrameReady();
@@ -3298,8 +3312,7 @@ public final class IsoWorld {
     }
 
     public float getWorldAgeDays() {
-        float worldAgeDays = (float)GameTime.getInstance().getWorldAgeHours() / 24.0F;
-        return worldAgeDays + (SandboxOptions.instance.timeSinceApo.getValue() - 1) * 30;
+        return (float)GameTime.getInstance().getWorldAgeDaysSinceBegin();
     }
 
     public HashMap<String, ArrayList<String>> getAllTiles() {

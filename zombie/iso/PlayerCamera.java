@@ -12,6 +12,7 @@ import zombie.core.math.PZMath;
 import zombie.debug.DebugOptions;
 import zombie.input.GameKeyboard;
 import zombie.input.JoypadManager;
+import zombie.input.KeybindId;
 import zombie.input.Mouse;
 import zombie.iso.sprite.IsoSprite;
 import zombie.network.GameServer;
@@ -163,7 +164,7 @@ public final class PlayerCamera {
             } else {
                 this.returnToCenter(1.0F / (16.0F * mult));
             }
-        } else if (this.playerIndex == 0 && player != null && !player.isBlockMovement() && GameKeyboard.isKeyDown("PanCamera")) {
+        } else if (this.playerIndex == 0 && player != null && !player.isBlockMovement() && GameKeyboard.isKeyDown(KeybindId.PAN_CAMERA)) {
             int screenWidth = IsoCamera.getScreenWidth(this.playerIndex);
             int screenHeight = IsoCamera.getScreenHeight(this.playerIndex);
             int x1 = IsoCamera.getScreenLeft(this.playerIndex);

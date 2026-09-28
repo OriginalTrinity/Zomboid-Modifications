@@ -16,6 +16,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Stack;
 import java.util.function.BiConsumer;
@@ -39,6 +40,7 @@ import zombie.UsedFromLua;
 import zombie.ZomboidFileSystem;
 import zombie.ZomboidGlobals;
 import zombie.Lua.LuaEventManager;
+import zombie.Lua.LuaManager;
 import zombie.ai.State;
 import zombie.ai.sadisticAIDirector.SleepingEvent;
 import zombie.ai.states.BumpedState;
@@ -135,6 +137,7 @@ import zombie.characters.skills.PerkFactory;
 import zombie.core.BoxedStaticValues;
 import zombie.core.Color;
 import zombie.core.Core;
+import zombie.core.TradingManager;
 import zombie.core.Translator;
 import zombie.core.logger.ExceptionLogger;
 import zombie.core.logger.LoggerManager;
@@ -172,6 +175,7 @@ import zombie.entity.ComponentType;
 import zombie.entity.components.crafting.BaseCraftingLogic;
 import zombie.input.AimingReticle;
 import zombie.input.GameKeyboard;
+import zombie.input.KeybindId;
 import zombie.input.Mouse;
 import zombie.inventory.InventoryItem;
 import zombie.inventory.InventoryItemFactory;
@@ -201,6 +205,7 @@ import zombie.iso.areas.DesignationZoneAnimal;
 import zombie.iso.areas.NonPvpZone;
 import zombie.iso.areas.SafeHouse;
 import zombie.iso.fboRenderChunk.FBORenderChunkManager;
+import zombie.iso.objects.GridSquareEdgeFacingDirection;
 import zombie.iso.objects.IsoBarricade;
 import zombie.iso.objects.IsoCurtain;
 import zombie.iso.objects.IsoDeadBody;
@@ -248,6 +253,7 @@ import zombie.ui.TutorialManager;
 import zombie.ui.UIManager;
 import zombie.util.StringUtils;
 import zombie.util.Type;
+import zombie.util.flags.ShortFlags;
 import zombie.util.lambda.Invokers;
 import zombie.util.lambda.PZOptional;
 import zombie.util.list.PZArrayList;
@@ -494,6 +500,7 @@ public class IsoPlayer extends IsoLivingCharacter implements IAnimalVisual, IHum
     private final PlayerCraftHistory craftHistory = new PlayerCraftHistory(this);
     public boolean autoDrink = true;
     private long lastCheatToggleMillis;
+    private final Map<String, Long> nextRandXpCheckTimes = new HashMap<>();
     protected static final float NETWORK_SPEED_MUL_MIN = 0.9F;
     protected static final float NETWORK_SPEED_MUL_MAX = 1.1F;
     protected static final float NETWORK_SPEED_SMOOTH_START = 0.9F;
@@ -697,7 +704,9 @@ public class IsoPlayer extends IsoLivingCharacter implements IAnimalVisual, IHum
     }
 
     private void registerVariableCallbacks() {
-        this.setVariable("CombatSpeed", () -> this.combatSpeed, val -> this.combatSpeed = val, owner -> "The combat speed multiplier. Usually 0.0 - 1.0");
+        this.setVariable(
+            "CombatSpeed", (float)1.0F, () -> this.combatSpeed, val -> this.combatSpeed = val, owner -> "The combat speed multiplier. Usually 0.0 - 1.0"
+        );
         this.setVariable(
             "TurnDelta",
             () -> this.turnDelta,
@@ -3203,7 +3212,7 @@ public class IsoPlayer extends IsoLivingCharacter implements IAnimalVisual, IHum
             forceWakeUp = true;
         }
 
-        if (this.isLocalPlayer() && GameClient.client || numPlayers > 1) {
+        if (this.isLocalPlayer() && (GameClient.client || numPlayers > 1)) {
             forceWakeUp = forceWakeUp || this.pressedAim() || this.pressedMovement(false);
         }
 
@@ -3252,7 +3261,7 @@ public class IsoPlayer extends IsoLivingCharacter implements IAnimalVisual, IHum
 
     private void updateEndurance() {
         if (!this.isAnimal() && !GameClient.client) {
-            if (!this.isSitOnGround() && !this.isSittingOnFurniture() && !this.isResting()) {
+            if (!this.isSitting() && !this.isResting()) {
                 float sneakMultiplier = 1.0F;
                 if (this.isSneaking()) {
                     sneakMultiplier = 1.5F;
@@ -3445,7 +3454,7 @@ public class IsoPlayer extends IsoLivingCharacter implements IAnimalVisual, IHum
 
     private void updateEnableModelsKey() {
         if (Core.debug) {
-            if (this.playerIndex == 0 && GameKeyboard.isKeyPressed("ToggleModelsEnabled")) {
+            if (this.playerIndex == 0 && GameKeyboard.isKeyPressed(KeybindId.TOGGLE_MODELS_ENABLED)) {
                 ModelManager.instance.debugEnableModels = !ModelManager.instance.debugEnableModels;
             }
         }
@@ -3489,7 +3498,7 @@ public class IsoPlayer extends IsoLivingCharacter implements IAnimalVisual, IHum
 
     private void updateGodModeKey() {
         if (Core.debug) {
-            if (GameKeyboard.isKeyPressed("ToggleGodModeInvisible")) {
+            if (GameKeyboard.isKeyPressed(KeybindId.TOGGLE_GOD_MODE)) {
                 IsoPlayer player = null;
 
                 for (int n = 0; n < numPlayers; n++) {
@@ -3768,17 +3777,10 @@ public class IsoPlayer extends IsoLivingCharacter implements IAnimalVisual, IHum
 
     @Override
     public void updateMovementRates() {
-        BodyPart footL = this.bodyDamage.getBodyPart(BodyPartType.Foot_L);
-        BodyPart footR = this.bodyDamage.getBodyPart(BodyPartType.Foot_R);
-        boolean haveGlassL = footL.haveGlass();
-        boolean haveGlassR = footR.haveGlass();
         this.calculateWalkSpeed();
         this.idleSpeed = this.calculateIdleSpeed();
         this.updateFootInjuries();
         this.updateInTreesInjuries();
-        if (GameClient.client && (!haveGlassL && footL.haveGlass() || !haveGlassR && footR.haveGlass())) {
-            GameClient.sendPlayerDamage(this);
-        }
     }
 
     @Override
@@ -4422,7 +4424,7 @@ public class IsoPlayer extends IsoLivingCharacter implements IAnimalVisual, IHum
         }
 
         if (GameClient.client && this.getVehicle().getSeat(this) == -1) {
-            DebugType.DetailedInfo.trace("forced " + this.getUsername() + " out of vehicle seat -1");
+            DebugType.DetailedInfo.println("forced " + this.getUsername() + " out of vehicle seat -1");
             this.setVehicle(null);
         } else {
             this.dirtyRecalcGridStackTime = 10.0F;
@@ -4810,114 +4812,114 @@ public class IsoPlayer extends IsoLivingCharacter implements IAnimalVisual, IHum
                 this.setTimedActionToRetrigger((LuaTimedActionNew)this.getCharacterActions().get(0));
             }
 
-            if (!this.isSittingOnFurniture() && !this.isSitOnGround()) {
-                for (BaseVehicle vehicle : this.getCell().vehicles) {
-                    if (vehicle.getUseablePart(this) != null) {
-                        return false;
-                    }
-                }
-
-                ContextualAction.releaseAll(this.contextualActions);
-                float lx = this.getX() - PZMath.fastfloor(this.getX());
-                float ly = this.getY() - PZMath.fastfloor(this.getY());
-                IsoDirections oppositeDir2 = null;
-                IsoDirections dir = this.getForwardIsoDirection();
-                if (this.current != null && this.current.getAdjacentSquare(dir) != null) {
-                    IsoDirections oppositeDir1;
-                    if (dir == IsoDirections.NW) {
-                        if (ly < lx) {
-                            this.doContextNSWE(IsoDirections.N);
-                            this.doContextNSWE(IsoDirections.W);
-                            oppositeDir1 = IsoDirections.S;
-                            oppositeDir2 = IsoDirections.E;
-                        } else {
-                            this.doContextNSWE(IsoDirections.W);
-                            this.doContextNSWE(IsoDirections.N);
-                            oppositeDir1 = IsoDirections.E;
-                            oppositeDir2 = IsoDirections.S;
-                        }
-                    } else if (dir == IsoDirections.NE) {
-                        lx = 1.0F - lx;
-                        if (ly < lx) {
-                            this.doContextNSWE(IsoDirections.N);
-                            this.doContextNSWE(IsoDirections.E);
-                            oppositeDir1 = IsoDirections.S;
-                            oppositeDir2 = IsoDirections.W;
-                        } else {
-                            this.doContextNSWE(IsoDirections.E);
-                            this.doContextNSWE(IsoDirections.N);
-                            oppositeDir1 = IsoDirections.W;
-                            oppositeDir2 = IsoDirections.S;
-                        }
-                    } else if (dir == IsoDirections.SE) {
-                        lx = 1.0F - lx;
-                        ly = 1.0F - ly;
-                        if (ly < lx) {
-                            this.doContextNSWE(IsoDirections.S);
-                            this.doContextNSWE(IsoDirections.E);
-                            oppositeDir1 = IsoDirections.N;
-                            oppositeDir2 = IsoDirections.W;
-                        } else {
-                            this.doContextNSWE(IsoDirections.E);
-                            this.doContextNSWE(IsoDirections.S);
-                            oppositeDir1 = IsoDirections.W;
-                            oppositeDir2 = IsoDirections.N;
-                        }
-                    } else if (dir == IsoDirections.SW) {
-                        ly = 1.0F - ly;
-                        if (ly < lx) {
-                            this.doContextNSWE(IsoDirections.S);
-                            this.doContextNSWE(IsoDirections.W);
-                            oppositeDir1 = IsoDirections.N;
-                            oppositeDir2 = IsoDirections.E;
-                        } else {
-                            this.doContextNSWE(IsoDirections.W);
-                            this.doContextNSWE(IsoDirections.S);
-                            oppositeDir1 = IsoDirections.E;
-                            oppositeDir2 = IsoDirections.N;
-                        }
-                    } else {
-                        this.doContextNSWE(dir);
-                        oppositeDir1 = dir.Rot180();
-                    }
-
-                    if (this.contextualActions.isEmpty() && dir.dx() != 0 && dir.dy() != 0) {
-                        this.doContextCorners(dir);
-                    }
-
-                    int count = this.contextualActions.size();
-                    if (oppositeDir1 != null) {
-                        IsoObject obj = this.getContextDoorOrWindowOrWindowFrame(oppositeDir1);
-                        if (obj != null) {
-                            this.doContextDoorOrWindowOrWindowFrame(oppositeDir1, obj);
-                        }
-                    }
-
-                    if (oppositeDir2 != null) {
-                        IsoObject obj = this.getContextDoorOrWindowOrWindowFrame(oppositeDir2);
-                        if (obj != null) {
-                            this.doContextDoorOrWindowOrWindowFrame(oppositeDir2, obj);
-                        }
-                    }
-
-                    for (int i = count; i < this.contextualActions.size(); i++) {
-                        this.contextualActions.get(i).behind = true;
-                    }
-
-                    if (this.contextualActions.isEmpty()) {
-                        LuaEventManager.triggerEvent("OnContextKey", this, BoxedStaticValues.toDouble(PZMath.fastfloor(this.timePressedContext * 1000.0F)));
-                        return false;
-                    } else {
-                        ContextualAction ca = this.pickBestContextualAction(this.contextualActions);
-                        this.performContextualAction(ca);
-                        return true;
-                    }
-                } else {
-                    return false;
-                }
-            } else {
+            if (this.isSitting()) {
                 LuaEventManager.triggerEvent("OnContextKey", this, BoxedStaticValues.toDouble(PZMath.fastfloor(this.timePressedContext * 1000.0F)));
                 return true;
+            }
+
+            for (BaseVehicle vehicle : this.getCell().vehicles) {
+                if (vehicle.getUseablePart(this) != null) {
+                    return false;
+                }
+            }
+
+            ContextualAction.releaseAll(this.contextualActions);
+            float lx = this.getX() - PZMath.fastfloor(this.getX());
+            float ly = this.getY() - PZMath.fastfloor(this.getY());
+            IsoDirections oppositeDir2 = null;
+            IsoDirections dir = this.getForwardIsoDirection();
+            if (this.current != null && this.current.getAdjacentSquare(dir) != null) {
+                IsoDirections oppositeDir1;
+                if (dir == IsoDirections.NW) {
+                    if (ly < lx) {
+                        this.doContextNSWE(IsoDirections.N);
+                        this.doContextNSWE(IsoDirections.W);
+                        oppositeDir1 = IsoDirections.S;
+                        oppositeDir2 = IsoDirections.E;
+                    } else {
+                        this.doContextNSWE(IsoDirections.W);
+                        this.doContextNSWE(IsoDirections.N);
+                        oppositeDir1 = IsoDirections.E;
+                        oppositeDir2 = IsoDirections.S;
+                    }
+                } else if (dir == IsoDirections.NE) {
+                    lx = 1.0F - lx;
+                    if (ly < lx) {
+                        this.doContextNSWE(IsoDirections.N);
+                        this.doContextNSWE(IsoDirections.E);
+                        oppositeDir1 = IsoDirections.S;
+                        oppositeDir2 = IsoDirections.W;
+                    } else {
+                        this.doContextNSWE(IsoDirections.E);
+                        this.doContextNSWE(IsoDirections.N);
+                        oppositeDir1 = IsoDirections.W;
+                        oppositeDir2 = IsoDirections.S;
+                    }
+                } else if (dir == IsoDirections.SE) {
+                    lx = 1.0F - lx;
+                    ly = 1.0F - ly;
+                    if (ly < lx) {
+                        this.doContextNSWE(IsoDirections.S);
+                        this.doContextNSWE(IsoDirections.E);
+                        oppositeDir1 = IsoDirections.N;
+                        oppositeDir2 = IsoDirections.W;
+                    } else {
+                        this.doContextNSWE(IsoDirections.E);
+                        this.doContextNSWE(IsoDirections.S);
+                        oppositeDir1 = IsoDirections.W;
+                        oppositeDir2 = IsoDirections.N;
+                    }
+                } else if (dir == IsoDirections.SW) {
+                    ly = 1.0F - ly;
+                    if (ly < lx) {
+                        this.doContextNSWE(IsoDirections.S);
+                        this.doContextNSWE(IsoDirections.W);
+                        oppositeDir1 = IsoDirections.N;
+                        oppositeDir2 = IsoDirections.E;
+                    } else {
+                        this.doContextNSWE(IsoDirections.W);
+                        this.doContextNSWE(IsoDirections.S);
+                        oppositeDir1 = IsoDirections.E;
+                        oppositeDir2 = IsoDirections.N;
+                    }
+                } else {
+                    this.doContextNSWE(dir);
+                    oppositeDir1 = dir.Rot180();
+                }
+
+                if (this.contextualActions.isEmpty() && dir.dx() != 0 && dir.dy() != 0) {
+                    this.doContextCorners(dir);
+                }
+
+                int count = this.contextualActions.size();
+                if (oppositeDir1 != null) {
+                    IsoObject obj = this.getContextDoorOrWindowOrWindowFrame(oppositeDir1);
+                    if (obj != null) {
+                        this.doContextDoorOrWindowOrWindowFrame(oppositeDir1, obj);
+                    }
+                }
+
+                if (oppositeDir2 != null) {
+                    IsoObject obj = this.getContextDoorOrWindowOrWindowFrame(oppositeDir2);
+                    if (obj != null) {
+                        this.doContextDoorOrWindowOrWindowFrame(oppositeDir2, obj);
+                    }
+                }
+
+                for (int i = count; i < this.contextualActions.size(); i++) {
+                    this.contextualActions.get(i).behind = true;
+                }
+
+                if (this.contextualActions.isEmpty()) {
+                    LuaEventManager.triggerEvent("OnContextKey", this, BoxedStaticValues.toDouble(PZMath.fastfloor(this.timePressedContext * 1000.0F)));
+                    return false;
+                } else {
+                    ContextualAction ca = this.pickBestContextualAction(this.contextualActions);
+                    this.performContextualAction(ca);
+                    return true;
+                }
+            } else {
+                return false;
             }
         } else {
             return false;
@@ -5057,19 +5059,19 @@ public class IsoPlayer extends IsoLivingCharacter implements IAnimalVisual, IHum
         if (this.isGrappling()) {
             return false;
         } else {
-            IsoObject doorN = this.current.getDoor(true);
+            IsoObject doorN = this.current.getDoor(GridSquareEdgeFacingDirection.NORTH_SOUTH);
             if (doorN instanceof IsoDoor isoDoor && isoDoor.isFacingSheet(this)) {
                 this.addContextualAction(ContextualAction.Action.ToggleCurtain, assumedDir, doorN.getSquare(), doorN);
                 return true;
             } else {
-                IsoObject doorW = this.current.getDoor(false);
+                IsoObject doorW = this.current.getDoor(GridSquareEdgeFacingDirection.EAST_WEST);
                 if (doorW instanceof IsoDoor door && door.isFacingSheet(this)) {
                     this.addContextualAction(ContextualAction.Action.ToggleCurtain, assumedDir, doorW.getSquare(), doorW);
                     return true;
                 } else {
                     if (assumedDir == IsoDirections.E) {
                         IsoGridSquare checkForDoorsAndWindows1 = IsoWorld.instance.currentCell.getGridSquare(this.getX() + 1.0F, this.getY(), this.getZ());
-                        IsoObject doorE = checkForDoorsAndWindows1 != null ? checkForDoorsAndWindows1.getDoor(true) : null;
+                        IsoObject doorE = checkForDoorsAndWindows1 != null ? checkForDoorsAndWindows1.getDoor(GridSquareEdgeFacingDirection.NORTH_SOUTH) : null;
                         if (doorE instanceof IsoDoor isoDoor && isoDoor.isFacingSheet(this)) {
                             this.addContextualAction(ContextualAction.Action.ToggleCurtain, assumedDir, doorE.getSquare(), doorE);
                             return true;
@@ -5078,7 +5080,7 @@ public class IsoPlayer extends IsoLivingCharacter implements IAnimalVisual, IHum
 
                     if (assumedDir == IsoDirections.S) {
                         IsoGridSquare checkForDoorsAndWindows1 = IsoWorld.instance.currentCell.getGridSquare(this.getX(), this.getY() + 1.0F, this.getZ());
-                        IsoObject doorS = checkForDoorsAndWindows1 != null ? checkForDoorsAndWindows1.getDoor(false) : null;
+                        IsoObject doorS = checkForDoorsAndWindows1 != null ? checkForDoorsAndWindows1.getDoor(GridSquareEdgeFacingDirection.EAST_WEST) : null;
                         if (doorS instanceof IsoDoor isoDoor && isoDoor.isFacingSheet(this)) {
                             this.addContextualAction(ContextualAction.Action.ToggleCurtain, assumedDir, doorS.getSquare(), doorS);
                             return true;
@@ -5213,7 +5215,7 @@ public class IsoPlayer extends IsoLivingCharacter implements IAnimalVisual, IHum
                         return obj;
                     }
 
-                    obj = this.current.getDoor(true);
+                    obj = this.current.getDoor(GridSquareEdgeFacingDirection.NORTH_SOUTH);
                     if (obj != null) {
                         return obj;
                     }
@@ -5237,7 +5239,7 @@ public class IsoPlayer extends IsoLivingCharacter implements IAnimalVisual, IHum
                         return obj;
                     }
 
-                    obj = this.current.getDoor(false);
+                    obj = this.current.getDoor(GridSquareEdgeFacingDirection.EAST_WEST);
                     if (obj != null) {
                         return obj;
                     }
@@ -5259,7 +5261,7 @@ public class IsoPlayer extends IsoLivingCharacter implements IAnimalVisual, IHum
                             return obj;
                         }
 
-                        obj = adjacent.getDoor(true);
+                        obj = adjacent.getDoor(GridSquareEdgeFacingDirection.NORTH_SOUTH);
                     }
                     break;
                 case E:
@@ -5275,7 +5277,7 @@ public class IsoPlayer extends IsoLivingCharacter implements IAnimalVisual, IHum
                             return obj;
                         }
 
-                        obj = adjacent.getDoor(false);
+                        obj = adjacent.getDoor(GridSquareEdgeFacingDirection.EAST_WEST);
                     }
             }
 
@@ -6566,10 +6568,11 @@ public class IsoPlayer extends IsoLivingCharacter implements IAnimalVisual, IHum
         String nameStr = this.username;
         if (canShowDisguisedName) {
             this.updateDisguisedState();
-            boolean bViewerIsAdmin = GameClient.client
+            boolean isViewerAdmin = GameClient.client
                 && IsoCamera.getCameraCharacter() instanceof IsoPlayer player
-                && player.role.hasCapability(Capability.CanSeePlayersStats);
-            if (this.isDisguised() && !bViewerIsAdmin) {
+                && player.getRole() != null
+                && player.getRole().hasCapability(Capability.CanSeePlayersStats);
+            if (this.isDisguised() && !isViewerAdmin) {
                 nameStr = ServerOptions.getInstance().hideDisguisedUserName.getValue() ? "" : Translator.getText("IGUI_Disguised_Player_Name");
             } else if (canShowFirstname && GameClient.client && ServerOptions.instance.showFirstAndLastName.getValue()) {
                 nameStr = this.getDescriptor().getForename() + " " + this.getDescriptor().getSurname();
@@ -6812,41 +6815,6 @@ public class IsoPlayer extends IsoLivingCharacter implements IAnimalVisual, IHum
         return 0.9F + 0.20000005F * IsoUtils.smoothstep(0.9F, 1.1F, scale);
     }
 
-    private boolean checkTile(int x, int y, int z, boolean isVerticalWall) {
-        IsoGridSquare square = this.getCell().getGridSquare(x, y, z);
-        return square != null && square.getWall(isVerticalWall) == null;
-    }
-
-    private boolean canWalkAxialPath(int x, int y, int z, int targetX, int targetY) {
-        boolean isHorizontalMove = y == targetY;
-        boolean isVerticalMove = x == targetX;
-        if (isHorizontalMove) {
-            int startX = Math.min(x, targetX);
-            int endX = Math.max(x, targetX);
-
-            for (int tileX = startX + 1; tileX <= endX; tileX++) {
-                if (!this.checkTile(tileX, y, z, false)) {
-                    return false;
-                }
-            }
-
-            return true;
-        } else if (isVerticalMove) {
-            int startY = Math.min(y, targetY);
-            int endY = Math.max(y, targetY);
-
-            for (int tileY = startY + 1; tileY <= endY; tileY++) {
-                if (!this.checkTile(x, tileY, z, true)) {
-                    return false;
-                }
-            }
-
-            return true;
-        } else {
-            return false;
-        }
-    }
-
     private void trySuppressPathFinder(Vector3 target) {
         float x = this.getX();
         float y = this.getY();
@@ -6859,19 +6827,23 @@ public class IsoPlayer extends IsoLivingCharacter implements IAnimalVisual, IHum
             if (!PolygonalMap2.instance.lineClearCollide(x, y, target.x, target.y, tileZ, this.vehicle, false, true)) {
                 this.getNetworkCharacterAI().forcePathFinder = false;
             } else if (tileX != targetTileX && tileY != targetTileY) {
-                if (this.canWalkAxialPath(tileX, tileY, tileZ, targetTileX, tileY)
-                    && this.canWalkAxialPath(targetTileX, tileY, tileZ, targetTileX, targetTileY)) {
+                if (!PolygonalMap2.instance.lineClearCollide(x, y, target.x, y, tileZ, this.vehicle, false, true)
+                    && !PolygonalMap2.instance.lineClearCollide(target.x, y, target.x, target.y, tileZ, this.vehicle, false, true)) {
                     target.y = y;
                     this.getNetworkCharacterAI().forcePathFinder = false;
                 } else {
-                    if (this.canWalkAxialPath(tileX, tileY, tileZ, tileX, targetTileY)
-                        && this.canWalkAxialPath(tileX, targetTileY, tileZ, targetTileX, targetTileY)) {
+                    if (!PolygonalMap2.instance.lineClearCollide(x, y, x, target.y, tileZ, this.vehicle, false, true)
+                        && !PolygonalMap2.instance.lineClearCollide(x, target.y, target.x, target.y, tileZ, this.vehicle, false, true)) {
                         target.x = x;
                         this.getNetworkCharacterAI().forcePathFinder = false;
                     }
                 }
             }
         }
+    }
+
+    private boolean isThrowingGrappledCorpse() {
+        return this.isGrappling() && (this.isGrappleThrowOverFence() || this.isGrappleThrowOutWindow());
     }
 
     protected boolean updateRemotePlayer() {
@@ -7000,7 +6972,8 @@ public class IsoPlayer extends IsoLivingCharacter implements IAnimalVisual, IHum
                     && this.getCurrentState() != ClimbOverFenceState.instance()
                     && this.getCurrentState() != PlayerSitOnFurnitureState.instance()
                     && this.getCurrentState() != ClimbSheetRopeState.instance()
-                    && this.getCurrentState() != ClimbDownSheetRopeState.instance()) {
+                    && this.getCurrentState() != ClimbDownSheetRopeState.instance()
+                    && !this.isThrowingGrappledCorpse()) {
                     pfb2.moveToPoint(target.x, target.y, this.getNetworkSpeedMul());
                 } else {
                     this.moveUnmoddedRemotePlayer();
@@ -7046,7 +7019,7 @@ public class IsoPlayer extends IsoLivingCharacter implements IAnimalVisual, IHum
                     networkAi.usePathFind = true;
                 }
 
-                PathFindBehavior2.BehaviorResult result = pfb2.update();
+                PathFindBehavior2.BehaviorResult result = pfb2.update(this.getNetworkSpeedMul());
                 if (result == PathFindBehavior2.BehaviorResult.Failed) {
                     this.setPathFindIndex(-1);
                     if (networkAi.forcePathFinder) {
@@ -8493,7 +8466,7 @@ public class IsoPlayer extends IsoLivingCharacter implements IAnimalVisual, IHum
     @Override
     public void onKilled(IsoGameCharacter killer, HandWeapon attackingWeapon, boolean isGory) {
         super.onKilled(killer, attackingWeapon, isGory);
-        if (GameServer.server) {
+        if (GameServer.server && !(this instanceof IsoAnimal)) {
             if (this.isOnFire()) {
                 ConnectionQueueStatistic.getInstance().playersKilledByFireToday.increase();
             }
@@ -8520,6 +8493,7 @@ public class IsoPlayer extends IsoLivingCharacter implements IAnimalVisual, IHum
         }
 
         if (GameServer.server) {
+            TradingManager.getInstance().cancelTrading(this.getOnlineID());
             this.getNetworkCharacterAI().syncDamage();
             GameServer.sendCharacterDeath(body);
         }
@@ -9034,16 +9008,10 @@ public class IsoPlayer extends IsoLivingCharacter implements IAnimalVisual, IHum
 
     public short getAnticheatMask(UdpConnection connection) {
         boolean cheatEnable = this.cheats.isSet(CheatType.GOD_MODE);
-        short mask = 0;
-        if (!connection.getRole().hasCapability(Capability.ConnectWithDebug)) {
-            mask = (short)(mask | 2048);
-        }
-
-        if (!cheatEnable && System.currentTimeMillis() - this.lastCheatToggleMillis > 500L) {
-            mask = (short)(mask | 1024);
-        }
-
-        return mask;
+        ShortFlags mask = ShortFlags.alloc();
+        mask.set(NetworkPlayerVariables.Flags.isDebugMode, !connection.getRole().hasCapability(Capability.ConnectWithDebug));
+        mask.set(NetworkPlayerVariables.Flags.isCheatMode, !cheatEnable && System.currentTimeMillis() - this.lastCheatToggleMillis > 500L);
+        return mask.asShort();
     }
 
     public void setLastCheatToggleMillis(long lastCheatToggleMillis) {
@@ -9074,6 +9042,19 @@ public class IsoPlayer extends IsoLivingCharacter implements IAnimalVisual, IHum
         return this.isDraggingCorpse()
             ? null
             : this.getClosestStaticMovingObjectInNearbySquares(IsoDeadBody.class, IsoDeadBody::canPickUpBodyFromSquare, IsoDeadBody::canBeGrabbed);
+    }
+
+    @UsedFromLua
+    public boolean isRandXp(int checkInterval, float addXpChance, PerkFactory.Perk perk) {
+        String perkId = perk.getId();
+        long currentTime = System.currentTimeMillis();
+        long nextRandXpCheckTime = this.nextRandXpCheckTimes.getOrDefault(perkId, 0L);
+        if (currentTime > nextRandXpCheckTime) {
+            this.nextRandXpCheckTimes.put(perkId, currentTime + checkInterval);
+            return LuaManager.GlobalObject.ZombRand(1.0F / addXpChance) == 0.0;
+        } else {
+            return false;
+        }
     }
 
     public boolean isUsingBinoculars() {

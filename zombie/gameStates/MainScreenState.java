@@ -3,7 +3,6 @@ package zombie.gameStates;
 
 import com.sun.management.OperatingSystemMXBean;
 import fmod.fmod.Audio;
-import java.awt.image.BufferedImage;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -12,14 +11,12 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PrintStream;
 import java.lang.management.ManagementFactory;
-import java.nio.ByteBuffer;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map.Entry;
-import javax.imageio.ImageIO;
 import org.lwjgl.glfw.GLFWImage;
 import org.lwjgl.glfw.GLFWImage.Buffer;
 import org.lwjglx.LWJGLException;
@@ -38,6 +35,7 @@ import zombie.HiddenFromLua;
 import zombie.IndieGL;
 import zombie.LocaleManager;
 import zombie.SoundManager;
+import zombie.UnitTests;
 import zombie.UsedFromLua;
 import zombie.ZomboidFileSystem;
 import zombie.Lua.LuaEventManager;
@@ -87,6 +85,7 @@ import zombie.core.textures.TextureAssetManager;
 import zombie.core.textures.TextureID;
 import zombie.core.textures.TextureIDAssetManager;
 import zombie.core.textures.VideoTexture;
+import zombie.core.utils.NativeImage;
 import zombie.core.znet.ServerBrowser;
 import zombie.core.znet.SteamUtils;
 import zombie.debug.DebugLog;
@@ -95,7 +94,6 @@ import zombie.debug.LogSeverity;
 import zombie.entity.components.attributes.Attribute;
 import zombie.input.JoypadManager;
 import zombie.modding.ActiveMods;
-import zombie.network.CustomizationManager;
 import zombie.network.GameClient;
 import zombie.network.statistics.StatisticManager;
 import zombie.patchupdater.PatchUpdater;
@@ -103,6 +101,7 @@ import zombie.ui.ScreenFader;
 import zombie.ui.TextManager;
 import zombie.ui.UIFont;
 import zombie.ui.UIManager;
+import zombie.util.StringUtils;
 import zombie.worldMap.UIWorldMap;
 import zombie.worldMap.WorldMapData;
 import zombie.worldMap.WorldMapDataAssetManager;
@@ -139,8 +138,8 @@ public final class MainScreenState extends GameState {
     private ConnectToServerState connectToServerState;
     private static GLFWImage windowIcon1;
     private static GLFWImage windowIcon2;
-    private static ByteBuffer windowIconBB1;
-    private static ByteBuffer windowIconBB2;
+    private static NativeImage windowIconImage1;
+    private static NativeImage windowIconImage2;
 
     @HiddenFromLua
     public static void main(String[] args) {
@@ -159,11 +158,15 @@ public final class MainScreenState extends GameState {
             if (args[n] != null) {
                 if (args[n].startsWith("-cachedir=")) {
                     ZomboidFileSystem.instance.setCacheDir(args[n].replace("-cachedir=", "").trim());
-                }
-
-                if (args[n].startsWith("-console_dot_txt_size_kb=")) {
+                } else if (args[n].startsWith("-console_dot_txt_size_kb=")) {
                     consoleDotTxtSizeString = args[n].replace("-console_dot_txt_size_kb=", "").trim();
                     Core.getInstance().setConsoleDotTxtSizeKB(consoleDotTxtSizeString);
+                } else if (args[n].startsWith("-useTimeStampedLogFileNames=")) {
+                    boolean useTimeStampedLogFileNames = StringUtils.tryParseBoolean(args[n].replace("-useTimeStampedLogFileNames=", "").trim());
+                    LoggerManager.setUseTimeStampedLogFileNames(useTimeStampedLogFileNames);
+                } else if (args[n].startsWith("-debugLogFile=")) {
+                    String debugLogFileName = args[n].replace("-debugLogFile=", "").trim();
+                    LoggerManager.setLogFilePrefixRaw(debugLogFileName);
                 }
             }
         }
@@ -213,7 +216,10 @@ public final class MainScreenState extends GameState {
         String debugcfg = null;
 
         for (int n = 0; n < args.length; n++) {
-            if (args[n] != null) {
+            if (args[n] != null
+                && !args[n].startsWith("-cachedir=")
+                && !args[n].startsWith("-useTimeStampedLogFileNames=")
+                && !args[n].startsWith("-debugLogFile=")) {
                 if (args[n].contains("safemode")) {
                     Core.safeMode = true;
                     Core.safeModeForced = true;
@@ -234,45 +240,36 @@ public final class MainScreenState extends GameState {
                 } else if (args[n].equals("-imgui")) {
                     Core.imGui = true;
                     Core.debug = true;
-                } else if (!args[n].startsWith("-debuglog=")) {
-                    if (!args[n].startsWith("-cachedir=")) {
-                        if (args[n].equals("+connect")) {
-                            if (n + 1 < args.length) {
-                                System.setProperty("args.server.connect", args[n + 1]);
-                            }
-
-                            n++;
-                        } else if (args[n].equals("+password")) {
-                            if (n + 1 < args.length) {
-                                System.setProperty("args.server.password", args[n + 1]);
-                            }
-
-                            n++;
-                        } else if (args[n].contains("-debugtranslation")) {
-                            Translator.debug = true;
-                        } else if ("-modfolders".equals(args[n])) {
-                            if (n + 1 < args.length) {
-                                ZomboidFileSystem.instance.setModFoldersOrder(args[n + 1]);
-                            }
-
-                            n++;
-                        } else if (args[n].equals("-nosteam")) {
-                            System.setProperty("zomboid.steam", "0");
-                        } else if (args[n].startsWith("-debugcfg=")) {
-                            debugcfg = args[n].replace("-debugcfg=", "");
-                        } else {
-                            DebugLog.log("unknown option \"" + args[n] + "\"");
-                        }
-                    }
-                } else {
+                } else if (args[n].startsWith("-debuglog=")) {
                     for (String t : args[n].replace("-debuglog=", "").split(",")) {
-                        try {
-                            char firstChar = t.charAt(0);
-                            t = firstChar != '+' && firstChar != '-' ? t : t.substring(1);
-                            DebugLog.setLogEnabled(DebugType.valueOf(t), firstChar != '-');
-                        } catch (IllegalArgumentException var13) {
-                        }
+                        DebugLog.setLogEnabledFromCommandLine(t);
                     }
+                } else if (args[n].equals("+connect")) {
+                    if (n + 1 < args.length) {
+                        System.setProperty("args.server.connect", args[n + 1]);
+                    }
+
+                    n++;
+                } else if (args[n].equals("+password")) {
+                    if (n + 1 < args.length) {
+                        System.setProperty("args.server.password", args[n + 1]);
+                    }
+
+                    n++;
+                } else if (args[n].contains("-debugtranslation")) {
+                    Translator.debug = true;
+                } else if ("-modfolders".equals(args[n])) {
+                    if (n + 1 < args.length) {
+                        ZomboidFileSystem.instance.setModFoldersOrder(args[n + 1]);
+                    }
+
+                    n++;
+                } else if (args[n].equals("-nosteam")) {
+                    System.setProperty("zomboid.steam", "0");
+                } else if (args[n].startsWith("-debugcfg=")) {
+                    debugcfg = args[n].replace("-debugcfg=", "");
+                } else {
+                    DebugLog.log("unknown option \"" + args[n] + "\"");
                 }
             }
         }
@@ -286,6 +283,8 @@ public final class MainScreenState extends GameState {
         if (Core.debug || System.getProperty("debug") != null) {
             Attribute.init();
         }
+
+        UnitTests.runIfEnabled();
 
         try {
             RenderThread.init();
@@ -312,9 +311,9 @@ public final class MainScreenState extends GameState {
     }
 
     private static void writeOutCurrentVersion() {
-        String versionStr = "revision=%s pzbullet=%s".formatted("b0bbce05d5", Bullet.getPZBulletVersion());
+        String versionStr = "revision=%s pzbullet=%s".formatted("4a0e9546ec", Bullet.getPZBulletVersion());
         DebugType.General.println("version=" + Core.getInstance().getVersion() + " demo=false");
-        if (!"b0bbce05d5".isEmpty()) {
+        if (!"4a0e9546ec".isEmpty()) {
             DebugType.General.println(versionStr);
         }
 
@@ -322,7 +321,7 @@ public final class MainScreenState extends GameState {
             String versionFileName = ZomboidFileSystem.instance.getCacheDirSub("version.txt");
             FileWriter versionFileWriter = new FileWriter(versionFileName, false);
             versionFileWriter.write(Core.getInstance().getVersion() + "");
-            if (!"b0bbce05d5".isEmpty()) {
+            if (!"4a0e9546ec".isEmpty()) {
                 versionFileWriter.write(10);
                 versionFileWriter.write(versionStr);
             }
@@ -702,56 +701,52 @@ public final class MainScreenState extends GameState {
         this.connectToServerState = state;
     }
 
+    private static NativeImage loadResizedWindowIcon(String fileName, int size) {
+        try (NativeImage decoded = NativeImage.read(new File("media/ui", fileName).getAbsolutePath(), false)) {
+            if (decoded == null) {
+                throw new IllegalStateException("Failed to load window icon " + fileName);
+            } else {
+                return decoded.resize(size, size);
+            }
+        }
+    }
+
     public static Buffer loadIcons() {
         Buffer imageBuffer = null;
         String os = System.getProperty("os.name").toUpperCase(Locale.ENGLISH);
         if (os.contains("WIN")) {
             try {
                 imageBuffer = GLFWImage.create(2);
-                BufferedImage bufferedImage = ImageIO.read(new File("media" + File.separator + "ui" + File.separator + "zomboidIcon16.png").getAbsoluteFile());
-                ByteBuffer byteBuffer;
-                windowIconBB1 = byteBuffer = loadInstance(bufferedImage, 16);
-                GLFWImage image;
-                windowIcon1 = image = GLFWImage.create().set(16, 16, byteBuffer);
-                imageBuffer.put(0, image);
-                bufferedImage = ImageIO.read(new File("media" + File.separator + "ui" + File.separator + "zomboidIcon32.png").getAbsoluteFile());
-                windowIconBB2 = byteBuffer = loadInstance(bufferedImage, 32);
-                windowIcon2 = image = GLFWImage.create().set(32, 32, byteBuffer);
-                imageBuffer.put(1, image);
-            } catch (IOException e) {
+                windowIconImage1 = loadResizedWindowIcon("zomboidIcon16.png", 16);
+                windowIcon1 = GLFWImage.create().set(16, 16, windowIconImage1.pixels());
+                imageBuffer.put(0, windowIcon1);
+                windowIconImage2 = loadResizedWindowIcon("zomboidIcon32.png", 32);
+                windowIcon2 = GLFWImage.create().set(32, 32, windowIconImage2.pixels());
+                imageBuffer.put(1, windowIcon2);
+            } catch (Exception e) {
                 DebugType.General.printException(e, LogSeverity.Error);
             }
         } else if (os.contains("MAC")) {
             try {
                 imageBuffer = GLFWImage.create(1);
-                BufferedImage bufferedImage = ImageIO.read(new File("media" + File.separator + "ui" + File.separator + "zomboidIcon128.png").getAbsoluteFile());
-                ByteBuffer byteBuffer;
-                windowIconBB1 = byteBuffer = loadInstance(bufferedImage, 128);
-                GLFWImage image;
-                windowIcon1 = image = GLFWImage.create().set(128, 128, byteBuffer);
-                imageBuffer.put(0, image);
-            } catch (IOException e) {
+                windowIconImage1 = loadResizedWindowIcon("zomboidIcon128.png", 128);
+                windowIcon1 = GLFWImage.create().set(128, 128, windowIconImage1.pixels());
+                imageBuffer.put(0, windowIcon1);
+            } catch (Exception e) {
                 DebugType.General.printException(e, LogSeverity.Error);
             }
         } else {
             try {
                 imageBuffer = GLFWImage.create(1);
-                BufferedImage bufferedImage = ImageIO.read(new File("media" + File.separator + "ui" + File.separator + "zomboidIcon32.png").getAbsoluteFile());
-                ByteBuffer byteBuffer;
-                windowIconBB1 = byteBuffer = loadInstance(bufferedImage, 32);
-                GLFWImage image;
-                windowIcon1 = image = GLFWImage.create().set(32, 32, byteBuffer);
-                imageBuffer.put(0, image);
-            } catch (IOException e) {
+                windowIconImage1 = loadResizedWindowIcon("zomboidIcon32.png", 32);
+                windowIcon1 = GLFWImage.create().set(32, 32, windowIconImage1.pixels());
+                imageBuffer.put(0, windowIcon1);
+            } catch (Exception e) {
                 DebugType.General.printException(e, LogSeverity.Error);
             }
         }
 
         return imageBuffer;
-    }
-
-    private static ByteBuffer loadInstance(BufferedImage image, int dimension) {
-        return CustomizationManager.loadAndResizeInstance(image, dimension, dimension);
     }
 
     private static void printSpecs() {

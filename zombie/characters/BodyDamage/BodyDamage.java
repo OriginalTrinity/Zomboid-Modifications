@@ -2328,8 +2328,7 @@ public final class BodyDamage {
                     if (this.parentChar.getMoodles().getMoodleLevel(MoodleType.HEAVY_LOAD) > 2
                         && this.parentChar.getVehicle() == null
                         && !this.parentChar.isAsleep()
-                        && !this.parentChar.isSitOnGround()
-                        && !this.parentChar.isSittingOnFurniture()
+                        && !this.parentChar.isSitting()
                         && this.getThermoregulator().getMetabolicTarget() != Metabolics.SeatedResting.getMet()
                         && (!GameServer.server || !GameServer.fastForward)
                         && this.getHealth() > 75.0F

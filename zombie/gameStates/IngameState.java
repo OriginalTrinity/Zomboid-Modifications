@@ -14,6 +14,9 @@ import java.nio.file.Path;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.concurrent.CompletableFuture;
+import org.lwjglx.opengl.Display;
+import org.lwjglx.opengl.Display.FocusGainedListener;
+import org.lwjglx.opengl.Display.FocusLostListener;
 import zombie.AmbientStreamManager;
 import zombie.CombatManager;
 import zombie.DebugFileWatcher;
@@ -102,6 +105,7 @@ import zombie.globalObjects.CGlobalObjects;
 import zombie.globalObjects.SGlobalObjects;
 import zombie.input.GameKeyboard;
 import zombie.input.JoypadManager;
+import zombie.input.KeybindId;
 import zombie.input.Mouse;
 import zombie.inventory.ItemSoundManager;
 import zombie.iso.BentFences;
@@ -234,6 +238,8 @@ public final class IngameState extends GameState {
     public String showWorldMapEditor;
     public boolean showSeamEditor;
     public static boolean loading;
+    private final FocusGainedListener displayFocusGainedCallback = this::onDisplayFocusGained;
+    private final FocusLostListener displayFocusLostCallback = this::onDisplayFocusLost;
 
     public IngameState() {
         instance = this;
@@ -787,11 +793,15 @@ public final class IngameState extends GameState {
         FBORenderOcclusion.getInstance().init();
         UIManager.setbFadeBeforeUI(false);
         UIManager.FadeIn(0.35F);
+        Display.addFocusGainedListener(this.displayFocusGainedCallback);
+        Display.addFocusLostListener(this.displayFocusLostCallback);
     }
 
     @Override
     public void exit() {
         DebugType.ExitDebug.debugln("IngameState.exit 1");
+        Display.removeFocusGainedListener(this.displayFocusGainedCallback);
+        Display.removeFocusLostListener(this.displayFocusLostCallback);
         if (SteamUtils.isSteamModeEnabled()) {
             SteamFriends.UpdateRichPresenceConnectionInfo("", "");
         }
@@ -1088,6 +1098,27 @@ public final class IngameState extends GameState {
         DebugType.ExitDebug.debugln("IngameState.exit 14");
     }
 
+    private void onDisplayFocusGained() {
+        DebugType.Input.debugln("Display focus gained.");
+    }
+
+    private void onDisplayFocusLost() {
+        DebugType.Input.debugln("Display focus lost.");
+        if (!Core.exiting) {
+            if (!GameClient.client && !GameServer.server) {
+                if (Core.getInstance().getOptionPauseOnFocusloss()) {
+                    if (GameWindow.isIngameState()) {
+                        if (IsoPlayer.hasInstance() && !IsoPlayer.allPlayersDead()) {
+                            if (UIManager.getSpeedControls().isReallyVisible()) {
+                                UIManager.getSpeedControls().SetCurrentGameSpeed(0);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     @Override
     public void yield() {
         SoundManager.instance.setMusicState("PauseMenu");
@@ -1182,7 +1213,7 @@ public final class IngameState extends GameState {
         }
 
         LineDrawer.clear();
-        if (Core.debug && GameKeyboard.isKeyPressed("ToggleAnimationText")) {
+        if (Core.debug && GameKeyboard.isKeyPressed(KeybindId.TOGGLE_ANIMATION_TEXT)) {
             DebugOptions.instance.animation.debug.setValue(!DebugOptions.instance.animation.debug.getValue());
         }
 
@@ -1214,7 +1245,7 @@ public final class IngameState extends GameState {
 
             DeadBodyAtlas.instance.renderUI();
             WorldItemAtlas.instance.renderUI();
-            if (GameKeyboard.isKeyDown("Display FPS")) {
+            if (GameKeyboard.isKeyDown(KeybindId.DISPLAY_FPS)) {
                 if (!this.fpsKeyDown) {
                     this.fpsKeyDown = true;
                     if (FPSGraph.instance == null) {

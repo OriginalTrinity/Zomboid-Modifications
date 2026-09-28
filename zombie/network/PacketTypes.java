@@ -46,14 +46,17 @@ import zombie.network.packets.character.PlayerInjuriesPacket;
 import zombie.network.packets.character.PlayerPacketReliable;
 import zombie.network.packets.character.PlayerPacketUnreliable;
 import zombie.network.packets.character.PlayerStatsPacket;
+import zombie.network.packets.character.PlayerSteppedOnGlassPacket;
 import zombie.network.packets.character.RemoveCorpseFromMapPacket;
 import zombie.network.packets.character.ThumpPacket;
 import zombie.network.packets.character.ZombieControlPacket;
 import zombie.network.packets.character.ZombieDeleteOnClientPacket;
+import zombie.network.packets.character.ZombieFallPacket;
 import zombie.network.packets.character.ZombieListPacket;
 import zombie.network.packets.character.ZombieRequestPacket;
 import zombie.network.packets.character.ZombieSimulationReliablePacket;
 import zombie.network.packets.character.ZombieSimulationUnreliablePacket;
+import zombie.network.packets.character.ZombieStaggerPacket;
 import zombie.network.packets.character.ZombieSynchronizationReliablePacket;
 import zombie.network.packets.character.ZombieSynchronizationUnreliablePacket;
 import zombie.network.packets.connection.ConnectCoopPacket;
@@ -158,12 +161,18 @@ import zombie.vehicleNetworkSound.UpdateVehiclePacket;
 public class PacketTypes {
     public static final byte PacketOrdering_General = 0;
     public static final byte PacketOrdering_Items = 1;
-    public static final byte PacketOrdering_ServerCustomization = 2;
     public static final byte PacketOrdering_Object = 3;
     public static final byte PacketOrdering_Map = 4;
     public static final byte PacketOrdering_Player = 5;
     public static final byte PacketOrdering_Animal = 7;
     public static final byte PacketOrdering_Vehicle = 8;
+    public static final byte ORDERING_PLAYER_INJURIES = 9;
+    public static final byte ORDERING_PLAYER_DAMAGE = 10;
+    public static final byte ORDERING_PLAYER_XP = 11;
+    public static final byte ORDERING_PLAYER_STATS = 12;
+    public static final byte ORDERING_PLAYER_EFFECTS = 13;
+    public static final byte ORDERING_PLAYER_HEALTH = 14;
+    public static final byte ORDERING_MAX = 31;
     public static final Map<Short, PacketTypes.PacketType> packetTypes = new TreeMap<>();
 
     public static void doPingPacket(ByteBufferWriter bb) {
@@ -189,8 +198,8 @@ public class PacketTypes {
 
     public static class PacketAuthorization {
         private static boolean isAuthorized(UdpConnection connection, PacketTypes.PacketType type) {
-            boolean isAuthorized = type.requiredCapability == Capability.None
-                || connection.getRole() != null && connection.getRole().hasCapability(type.requiredCapability);
+            boolean hasRequiredCapability = connection.getRole() != null && connection.getRole().hasCapability(type.requiredCapability);
+            boolean isAuthorized = type.requiredCapability == Capability.None || hasRequiredCapability || connection.isCoopHost;
             if (!isAuthorized || type.serverHandler == null && type.handler == null) {
                 onUnauthorized(connection, type);
             }
@@ -242,7 +251,6 @@ public class PacketTypes {
         RequestMedicalCheck(RequestMedicalCheckPacket.class),
         HiddenAuthors(HiddenAuthorsPacket.class),
         ServerMap(ServerMapPacket.class),
-        RequestLargeAreaZip(RequestLargeAreaZipPacket.class),
         SentChunk(SentChunkPacket.class),
         RequestZipList(RequestZipListPacket.class),
         NotRequiredInZip(NotRequiredInZipPacket.class),
@@ -255,10 +263,12 @@ public class PacketTypes {
         ZombieSynchronizationReliable(ZombieSynchronizationReliablePacket.class),
         ZombieDeleteOnClient(ZombieDeleteOnClientPacket.class),
         ZombieRequest(ZombieRequestPacket.class),
+        ZombieStagger(ZombieStaggerPacket.class),
         ZombieDeath(DeadZombiePacket.class),
         SlowFactor(SlowFactorPacket.class),
         ZombieControl(ZombieControlPacket.class),
         Thump(ThumpPacket.class),
+        ZombieFall(ZombieFallPacket.class),
         AnimalCommand(AnimalCommandPacket.class),
         AnimalOwnership(AnimalOwnershipPacket.class),
         AnimalPacket(AnimalPacket.class),
@@ -331,6 +341,7 @@ public class PacketTypes {
         ReplaceInventoryItemInContainer(ReplaceInventoryItemInContainerPacket.class),
         SyncItemDelete(SyncItemDeletePacket.class),
         AddItemToMap(AddItemToMapPacket.class),
+        AddObjectToMap(AddObjectToMapPacket.class),
         AddCorpseToMap(AddCorpseToMapPacket.class),
         RemoveItemFromSquare(RemoveItemFromSquarePacket.class),
         RemoveCorpseFromMap(RemoveCorpseFromMapPacket.class),
@@ -374,6 +385,7 @@ public class PacketTypes {
         PlayerXp(PlayerXpPacket.class),
         AttackCollisionCheckPacket(AttackCollisionCheckPacket.class),
         PlayerEmptyShot(PlayerEmptyShotPacket.class),
+        PlayerSteppedOnGlass(PlayerSteppedOnGlassPacket.class),
         PlaySound(PlaySoundPacket.class),
         RangedWeaponSound(RangedWeaponSoundPacket.class),
         LoopedRangedWeaponSound(LoopedRangedWeaponSoundPacket.class),
@@ -505,8 +517,7 @@ public class PacketTypes {
         RoomThermalRemove(RoomThermalRemovePacket.class),
         RoomThermalDebug(RoomThermalDebugPacket.class),
         RoomThermalPersistence(RoomThermalPersistencePacket.class),
-        RoomThermalConfig(RoomThermalConfigPacket.class)
-        ;
+        RoomThermalConfig(RoomThermalConfigPacket.class);
 
         private Capability requiredCapability;
         public int packetPriority;

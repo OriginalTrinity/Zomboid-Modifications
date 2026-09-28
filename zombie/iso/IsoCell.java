@@ -79,6 +79,7 @@ import zombie.gameStates.GameLoadingState;
 import zombie.input.AimingReticle;
 import zombie.input.GameKeyboard;
 import zombie.input.JoypadManager;
+import zombie.input.KeybindId;
 import zombie.inventory.InventoryItem;
 import zombie.iso.SpriteDetails.IsoFlagType;
 import zombie.iso.SpriteDetails.IsoObjectType;
@@ -3514,9 +3515,7 @@ public final class IsoCell {
     }
 
     public void render() {
-        if (Core.debug && IsoCamera.frameState.playerIndex == 0 && GameKeyboard.isKeyPressed(199)) {
-            PerformanceSettings.fboRenderChunk = !PerformanceSettings.fboRenderChunk;
-        }
+        this.checkToggleOldRendererKey();
 
         try (AbstractPerformanceProfileProbe var1 = IsoCell.s_performance.isoCellRender.profile()) {
             if (PerformanceSettings.fboRenderChunk) {
@@ -3703,6 +3702,12 @@ public final class IsoCell {
 
         for (IsoObject obj : this.staticUpdaterObjectList) {
             obj.renderlast();
+        }
+    }
+
+    private void checkToggleOldRendererKey() {
+        if (Core.debug && IsoCamera.frameState.playerIndex == 0 && GameKeyboard.isKeyPressed(KeybindId.TOGGLE_OLD_RENDERER)) {
+            PerformanceSettings.fboRenderChunk = !PerformanceSettings.fboRenderChunk;
         }
     }
 

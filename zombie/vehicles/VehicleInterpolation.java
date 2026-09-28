@@ -82,6 +82,17 @@ public class VehicleInterpolation {
         }
     }
 
+    public void clearLast() {
+        this.wasNull = false;
+        this.lastBuf1 = null;
+        this.lastTime = -1L;
+    }
+
+    public void clearAll() {
+        this.clear();
+        this.clearLast();
+    }
+
     public void update(long time) {
         temp.time = time - this.delay;
         VehicleInterpolationData dataA = this.buffer.floor(temp);

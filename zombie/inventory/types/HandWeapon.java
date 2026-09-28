@@ -8,7 +8,6 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Set;
-import zombie.AttackType;
 import zombie.GameWindow;
 import zombie.SandboxOptions;
 import zombie.UsedFromLua;
@@ -2704,15 +2703,7 @@ public final class HandWeapon extends InventoryItem implements IUpdater {
         }
 
         WeaponType weaponType = WeaponType.getWeaponType(handWeapon);
-        if (weaponType == WeaponType.SPEAR && !handWeapon.hasTag(ItemTag.NO_FENCE_STAB)) {
-            if (isoGameCharacter instanceof IsoPlayer isoPlayer) {
-                isoPlayer.setAttackType(AttackType.SPEAR_STAB);
-            }
-
-            return true;
-        } else {
-            return weaponType == WeaponType.KNIFE;
-        }
+        return weaponType == WeaponType.SPEAR && !handWeapon.hasTag(ItemTag.NO_FENCE_STAB) || weaponType == WeaponType.KNIFE;
     }
 
     public void randomizeFirearmAsLoot() {

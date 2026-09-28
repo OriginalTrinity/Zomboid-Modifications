@@ -391,7 +391,7 @@ public final class Food extends InventoryItem {
 
                         this.lastCookMinute = currentCookMinute;
                         float dt = this.heat / 1.5F;
-                        if (outermostContainer.getTemprature() <= 1.6F) {
+                        if (outermostContainer.getTemperature() <= 1.6F) {
                             dt *= 0.05F;
                         }
 
@@ -539,7 +539,7 @@ public final class Food extends InventoryItem {
                 if (currentCookMinute != this.lastCookMinute) {
                     this.lastCookMinute = currentCookMinute;
                     float dt = 1.0F;
-                    if (outermostContainer.getTemprature() <= 1.6F) {
+                    if (outermostContainer.getTemperature() <= 1.6F) {
                         dt *= 0.2F;
                     }
 
@@ -615,7 +615,7 @@ public final class Food extends InventoryItem {
         }
 
         ItemContainer container = this.getOutermostContainer();
-        return container != null && container.getParent() != null && container.getParent().getObjectIndex() != -1 && !(container.getTemprature() <= 1.6F)
+        return container != null && container.getParent() != null && container.getParent().getObjectIndex() != -1 && !(container.getTemperature() <= 1.6F)
             ? this.isCookable() && !this.isFrozen() && this.getHeat() > 1.6F
             : false;
     }
@@ -644,7 +644,7 @@ public final class Food extends InventoryItem {
             }
 
             ItemContainer outermostContainer = this.getOutermostContainer();
-            float temp = outermostContainer == null ? 1.0F : outermostContainer.getTemprature();
+            float temp = outermostContainer == null ? 1.0F : outermostContainer.getTemperature();
             if (this.heat > temp) {
                 this.heat = this.heat - 0.001F * this.temperatureTimeAccum;
                 if (this.heat < Math.max(0.2F, temp)) {
@@ -747,18 +747,17 @@ public final class Food extends InventoryItem {
         float elapsedHours = (float)GameTime.getInstance().getWorldAgeHours();
         ItemContainer outermostContainer = this.getOutermostContainer();
         this.updateFreezing(outermostContainer, elapsedHours);
-        GameTime.getInstance();
         this.lastAged = GameTime.checkHours(this.lastAged, elapsedHours);
         if (elapsedHours > this.lastAged) {
             double ageIncrease = elapsedHours - this.lastAged;
-            if (outermostContainer != null && this.heat != outermostContainer.getTemprature()) {
+            if (outermostContainer != null && this.heat != outermostContainer.getTemperature()) {
                 if (ageIncrease < 0.33333334F) {
                     if (!IsoWorld.instance.getCell().getProcessItems().contains(this)) {
-                        this.heat = GameTime.instance.Lerp(this.heat, outermostContainer.getTemprature(), (float)ageIncrease / 0.33333334F);
+                        this.heat = GameTime.instance.Lerp(this.heat, outermostContainer.getTemperature(), (float)ageIncrease / 0.33333334F);
                         IsoWorld.instance.getCell().addToProcessItems(this);
                     }
                 } else {
-                    this.heat = outermostContainer.getTemprature();
+                    this.heat = outermostContainer.getTemperature();
                 }
             }
 
@@ -795,8 +794,7 @@ public final class Food extends InventoryItem {
     @Override
     public void setAutoAge() {
         ItemContainer outermostContainer = this.getOutermostContainer();
-        float worldAgeDays = (float)GameTime.getInstance().getWorldAgeHours() / 24.0F;
-        worldAgeDays += (SandboxOptions.instance.timeSinceApo.getValue() - 1) * 30;
+        float worldAgeDays = (float)GameTime.getInstance().getWorldAgeDaysSinceBegin();
         float ageIncrease = worldAgeDays;
         if (this.isInFridge(outermostContainer) || this.isInFreezer(outermostContainer)) {
             int electShutModifier = SandboxOptions.instance.elecShutModifier.getValue();
@@ -833,7 +831,7 @@ public final class Food extends InventoryItem {
         this.lastAged = (float)GameTime.getInstance().getWorldAgeHours();
         this.lastFrozenUpdate = this.lastAged;
         if (outermostContainer != null) {
-            this.setHeat(outermostContainer.getTemprature());
+            this.setHeat(outermostContainer.getTemperature());
         }
     }
 
@@ -854,7 +852,7 @@ public final class Food extends InventoryItem {
                     localHoursToThaw *= 2.0F;
                 }
 
-                if (outermostContainer != null && outermostContainer.getTemprature() > 1.0F) {
+                if (outermostContainer != null && outermostContainer.getTemperature() > 1.0F) {
                     localHoursToThaw /= 6.0F;
                 }
 
@@ -1338,8 +1336,8 @@ public final class Food extends InventoryItem {
                 return false;
             }
 
-            if (this.container == null || this.heat == this.container.getTemprature() && !this.container.isTemperatureChanging()) {
-                if (this.isTainted && this.container != null && this.container.getTemprature() > 1.0F) {
+            if (this.container == null || this.heat == this.container.getTemperature() && !this.container.isTemperatureChanging()) {
+                if (this.isTainted && this.container != null && this.container.getTemperature() > 1.0F) {
                     return false;
                 }
 
@@ -2506,16 +2504,12 @@ public final class Food extends InventoryItem {
 
     @Override
     public void OnAddedToContainer(ItemContainer container) {
-        if (GameServer.server) {
-            this.updateAge();
-        }
+        this.updateAge();
     }
 
     @Override
     public void OnBeforeRemoveFromContainer(ItemContainer container) {
-        if (GameServer.server) {
-            this.updateAge();
-        }
+        this.updateAge();
     }
 
     public int getFertilizedTime() {
@@ -2747,5 +2741,9 @@ public final class Food extends InventoryItem {
                 }
             }
         }
+    }
+
+    public boolean hasSpices() {
+        return this.getSpices() != null && !this.getSpices().isEmpty();
     }
 }
