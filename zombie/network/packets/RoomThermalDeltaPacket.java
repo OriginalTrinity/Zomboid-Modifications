@@ -11,7 +11,7 @@ import zombie.network.PacketSetting;
 import java.util.ArrayList;
 import java.util.List;
 
-@PacketSetting(ordering = 9, priority = 1, reliability = 1, requiredCapability = Capability.ClimateManager, handlingType = 2)
+@PacketSetting(ordering = 15, priority = 1, reliability = 1, requiredCapability = Capability.ClimateManager, handlingType = 2)
 public class RoomThermalDeltaPacket  implements INetworkPacket {
     private List<RoomThermalDeltaEntry> rooms = new ArrayList<>();
 

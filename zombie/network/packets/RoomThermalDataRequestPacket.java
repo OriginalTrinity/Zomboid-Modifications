@@ -13,7 +13,7 @@ import zombie.network.PacketSetting;
 import java.util.ArrayList;
 import java.util.List;
 
-@PacketSetting(ordering = 9, priority = 1, reliability = 2, requiredCapability = Capability.None, handlingType = 1)
+@PacketSetting(ordering = 15, priority = 1, reliability = 2, requiredCapability = Capability.None, handlingType = 1)
 public class RoomThermalDataRequestPacket implements INetworkPacket {
     private List<Long> roomIds = new ArrayList<>();
 

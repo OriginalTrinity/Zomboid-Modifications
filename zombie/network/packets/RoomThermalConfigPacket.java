@@ -14,7 +14,7 @@ import zombie.network.PacketTypes;
  * Server -> client: full config (ACTION_SYNC).
  * Client -> server: ACTION_SET (one option), ACTION_SAVE, ACTION_RESTORE, ACTION_RESET.
  */
-@PacketSetting(ordering = 9, priority = 1, reliability = 2, requiredCapability = Capability.ConnectWithDebug, handlingType = 3)
+@PacketSetting(ordering = 15, priority = 1, reliability = 2, requiredCapability = Capability.ConnectWithDebug, handlingType = 3)
 public class RoomThermalConfigPacket implements INetworkPacket {
 
     public static final byte ACTION_SYNC = 0, ACTION_SET = 1, ACTION_SAVE = 2, ACTION_RESTORE = 3, ACTION_RESET = 4;

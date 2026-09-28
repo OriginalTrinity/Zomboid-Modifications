@@ -14,7 +14,7 @@ import zombie.network.PacketTypes;
 /** Client -> server: room id + action
  * Server -> client: room id + {@link zombie.iso.IsoThermalRoom.DebugInfo} payload
  */
-@PacketSetting(ordering = 9, priority = 1, reliability = 2, requiredCapability = Capability.ConnectWithDebug, handlingType = 3)
+@PacketSetting(ordering = 15, priority = 1, reliability = 2, requiredCapability = Capability.ConnectWithDebug, handlingType = 3)
 public class RoomThermalDebugPacket implements INetworkPacket {
 
     public static final byte ACTION_VIEW = 0, ACTION_RESCAN = 1, ACTION_SET_TEMP = 2, ACTION_FORECAST = 3;

@@ -13,7 +13,7 @@ import zombie.network.PacketTypes;
 import java.util.ArrayList;
 import java.util.List;
 
-@PacketSetting(ordering = 9, priority = 1, reliability = 2, requiredCapability = Capability.ConnectWithDebug, handlingType = 3)
+@PacketSetting(ordering = 15, priority = 1, reliability = 2, requiredCapability = Capability.ConnectWithDebug, handlingType = 3)
 public class RoomThermalPersistencePacket implements INetworkPacket {
 
     public static final byte ACTION_VIEW = 0, ACTION_CLEANUP = 1;

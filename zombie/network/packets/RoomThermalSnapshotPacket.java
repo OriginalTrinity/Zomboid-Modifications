@@ -14,7 +14,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
-@PacketSetting(ordering = 9, priority = 1, reliability = 3, requiredCapability = Capability.ClimateManager, handlingType = 2)
+@PacketSetting(ordering = 15, priority = 1, reliability = 3, requiredCapability = Capability.ClimateManager, handlingType = 2)
 public class RoomThermalSnapshotPacket implements INetworkPacket {
     private List<RoomThermalStateSnapshot> rooms = new ArrayList<>();
 
