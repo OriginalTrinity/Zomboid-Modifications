@@ -20,6 +20,7 @@ import zombie.debug.DebugType;
 import zombie.iso.*;
 import zombie.iso.SpriteDetails.IsoFlagType;
 import zombie.iso.fboRenderChunk.FBORenderAreaHighlights;
+import zombie.iso.objects.GridSquareEdgeFacingDirection;
 import zombie.iso.objects.IsoBarbecue;
 import zombie.iso.objects.IsoFire;
 import zombie.iso.objects.IsoFireplace;
@@ -316,18 +317,18 @@ public class RoomThermalPanel extends PZDebugWindow {
         for (IsoThermalRoom.DebugInfo.Opening opening : room.getDebugInfo().getOpenings()) {
             IsoGridSquare sq = cell.getGridSquare(opening.x(), opening.y(), room.getZ());
             if (sq == null) continue;
-            float[] anchor = this.edgeAnchor(opening.x(), opening.y(), opening.north());
+            float[] anchor = this.edgeAnchor(opening.x(), opening.y(), opening.edgeDirection());
             switch (opening.type()) {
                 case "Window" -> {
-                    this.highlightObject(sq.getWindow(opening.north()), 0.2f, 0.9f, 0.9f, 0.8f);
+                    this.highlightObject(sq.getWindow(opening.edgeDirection()), 0.2f, 0.9f, 0.9f, 0.8f);
                     drawWorldLabel(anchor[0], anchor[1], room.getZ(), 0.5f, String.format("%.2f (W: %s | C: %s)", opening.coefficient(), opening.state(), opening.curtains()));
                 }
                 case "Door" -> {
-                    this.highlightObject(sq.getDoor(opening.north()), 1.0f, 0.6f, 0.1f, 0.8f);
+                    this.highlightObject(sq.getDoor(opening.edgeDirection()), 1.0f, 0.6f, 0.1f, 0.8f);
                     drawWorldLabel(anchor[0], anchor[1], room.getZ(), 0.5f, String.format("%.2f (%s)", opening.coefficient(), opening.state()));
                 }
                 default -> {
-                    IsoObject edgeObject = this.findEdgeObject(sq, opening.north());
+                    IsoObject edgeObject = this.findEdgeObject(sq, opening.edgeDirection());
                     if (edgeObject != null) {
                         this.highlightObject(edgeObject, 1.0f, 0.1f, 0.1f, 0.8f);
                     } else {
@@ -356,8 +357,11 @@ public class RoomThermalPanel extends PZDebugWindow {
 
     // Windows/doors sit on one edge of the tile (north edge or west edge), not the tile's center -
     // anchoring there instead of the centroid removes the facing-dependent skew.
-    private float[] edgeAnchor(int x, int y, boolean north) {
-        return north ? new float[]{x + 0.5f, y} : new float[]{x, y + 0.5f};
+    private float[] edgeAnchor(int x, int y, GridSquareEdgeFacingDirection edgeDirection) {
+        return switch (edgeDirection) {
+            case NORTH_SOUTH -> new float[]{x + 0.5f, y};
+            case EAST_WEST -> new float[]{x, y + 0.5f};
+        };
     }
 
     static void highlightRoomBounds(IsoThermalRoom room, float r, float g, float b, float a, boolean labels) {
@@ -485,9 +489,12 @@ public class RoomThermalPanel extends PZDebugWindow {
     }
 
     /** The object forming the given edge of the square (the one whose own sprite collides on it), if any. */
-    private IsoObject findEdgeObject(IsoGridSquare sq, boolean north) {
+    private IsoObject findEdgeObject(IsoGridSquare sq, GridSquareEdgeFacingDirection edgeDirection) {
         if (sq == null) return null;
-        IsoFlagType collide = north ? IsoFlagType.collideN : IsoFlagType.collideW;
+        IsoFlagType collide = switch (edgeDirection) {
+            case NORTH_SOUTH -> IsoFlagType.collideN;
+            case EAST_WEST -> IsoFlagType.collideW;
+        };
         for (int i = 0; i < sq.getObjects().size(); i++) {
             IsoObject obj = sq.getObjects().get(i);
             if (obj.getProperties() != null && obj.getProperties().has(collide)) return obj;

@@ -5,6 +5,7 @@ import zombie.GameTime;
 import zombie.core.Core;
 import zombie.core.network.ByteBufferReader;
 import zombie.core.network.ByteBufferWriter;
+import zombie.core.properties.PropertyContainer;
 import zombie.iso.SpriteDetails.IsoFlagType;
 import zombie.iso.areas.IsoRoom;
 import zombie.iso.areas.isoregion.regions.IsoWorldRegion;
@@ -47,7 +48,7 @@ public class IsoThermalRoom {
     }
 
     public record RoomOpening(IsoGridSquare square, IsoObject door, IsoWindow window, IsoRoom neighborRoom,
-                              IsoWorldRegion neighborRegion, IsoGridSquare neighborSquare, boolean north) {
+                              IsoWorldRegion neighborRegion, IsoGridSquare neighborSquare, GridSquareEdgeFacingDirection edgeDirection) {
         public boolean isInterRoom() {
             return this.neighborRoom != null || this.neighborRegion != null;
         }
@@ -170,6 +171,20 @@ public class IsoThermalRoom {
         return cell == null ? null : cell.getGridSquare(sq.getX() + dx, sq.getY() + dy, sq.getZ());
     }
 
+    private static IsoGridSquare getOppositeSquare(IsoGridSquare sq, GridSquareEdgeFacingDirection edgeDirection) {
+        return switch (edgeDirection) {
+            case NORTH_SOUTH -> getAdjacentSquare(sq, 0, -1);
+            case EAST_WEST -> getAdjacentSquare(sq, -1, 0);
+        };
+    }
+
+    private static IsoGridSquare getFacingSquare(IsoGridSquare sq, GridSquareEdgeFacingDirection edgeDirection) {
+        return switch (edgeDirection) {
+            case NORTH_SOUTH -> getAdjacentSquare(sq, 0, 1);
+            case EAST_WEST -> getAdjacentSquare(sq, 1, 0);
+        };
+    }
+
     private ArrayList<IsoGridSquare> findAllSquares(IsoWorldRegion region, IsoGridSquare seed) {
         ArrayList<IsoGridSquare> result = new ArrayList<>();
         if (seed == null || region == null) return result;
@@ -219,14 +234,13 @@ public class IsoThermalRoom {
         for (IsoGridSquare sq : this.squares) {
             if (!this.belongsToMe(sq)) continue;
 
-            // North/west openings live on this square itself.
-            this.scanEdge(sq, this.getAdjacentSquare(sq, 0, -1), true);
-            this.scanEdge(sq, this.getAdjacentSquare(sq, -1, 0), false);
-            // South/east openings live on the neighbor's own north/west edge.
-            IsoGridSquare s = this.getAdjacentSquare(sq, 0, 1);
-            if (s != null) this.scanEdge(s, s, true);
-            IsoGridSquare e = this.getAdjacentSquare(sq, 1, 0);
-            if (e != null) this.scanEdge(e, e, false);
+            for (GridSquareEdgeFacingDirection edgeDirection : GridSquareEdgeFacingDirection.values()) {
+                // North/west openings live on this square itself
+                this.scanEdge(sq, getOppositeSquare(sq, edgeDirection), edgeDirection);
+                // South/east openings live on the neighbor's own north/west edge
+                IsoGridSquare neighbor = getFacingSquare(sq, edgeDirection);
+                if (neighbor != null) this.scanEdge(neighbor, neighbor, edgeDirection);
+            }
         }
 
         for (IsoGridSquare sq : this.squares) {
@@ -235,64 +249,36 @@ public class IsoThermalRoom {
         }
     }
 
-    private void scanEdge(IsoGridSquare hostSquare, IsoGridSquare otherSideSquare, boolean north) {
+    private void scanEdge(IsoGridSquare hostSquare, IsoGridSquare otherSideSquare, GridSquareEdgeFacingDirection edgeDirection) {
         if (hostSquare == null) return;
 
-        IsoObject door = this.getDoorOnEdge(hostSquare, north);
-        IsoWindow window = door == null ? this.getWindowOnEdge(hostSquare, north) : null;
+        IsoObject door = hostSquare.getDoor(edgeDirection);
+        IsoWindow window = door == null ? hostSquare.getWindow(edgeDirection) : null;
 
-        if (door == null && window == null && this.hasSolidWall(hostSquare, north)) {
+        if (door == null && window == null && this.hasSolidWall(hostSquare, edgeDirection)) {
             return; // solid wall here, not an opening
         }
         if (this.belongsToMe(otherSideSquare)) return;
 
         IsoWorldRegion otherRegion = RoomTemperatureManager.getRegionOfSquare(otherSideSquare);
         IsoRoom neighborRoom = otherRegion == null ? RoomTemperatureManager.getMappedRoom(otherSideSquare) : null;
-        this.openings.add(new RoomOpening(hostSquare, door, window, neighborRoom, otherRegion, otherSideSquare, north));
+        this.openings.add(new RoomOpening(hostSquare, door, window, neighborRoom, otherRegion, otherSideSquare, edgeDirection));
     }
 
-    private boolean hasSolidWall(IsoGridSquare sq, boolean north) {
+    private boolean hasSolidWall(IsoGridSquare sq, GridSquareEdgeFacingDirection edgeDirection) {
         sq.RecalcPropertiesIfNeeded();
-
-        boolean collides = north
-                ? sq.getProperties().has(IsoFlagType.collideN)
-                : sq.getProperties().has(IsoFlagType.collideW);
-        if (!collides) return false;
-
-        // Hoppable edges (wall frames, railings, low walls) carry wall flags but are open to the air
-        if (north ? sq.getProperties().has(IsoFlagType.HoppableN) : sq.getProperties().has(IsoFlagType.HoppableW))
-            return false;
-
-        if (sq.getProperties().has(IsoFlagType.WallNW) || sq.getProperties().has(IsoFlagType.WallSE)) {
-            return true;
-        }
-        return north
-                ? sq.getProperties().has(IsoFlagType.WallN) || sq.getProperties().has(IsoFlagType.WallNTrans)
-                : sq.getProperties().has(IsoFlagType.WallW) || sq.getProperties().has(IsoFlagType.WallWTrans);
+        PropertyContainer props = sq.getProperties();
+        return switch (edgeDirection) {
+            case NORTH_SOUTH -> isSolidWall(props, IsoFlagType.collideN, IsoFlagType.HoppableN, IsoFlagType.WallN, IsoFlagType.WallNTrans);
+            case EAST_WEST -> isSolidWall(props, IsoFlagType.collideW, IsoFlagType.HoppableW, IsoFlagType.WallW, IsoFlagType.WallWTrans);
+        };
     }
 
-    private IsoObject getDoorOnEdge(IsoGridSquare sq, boolean north) {
-        if (sq == null) return null;
-        for (int i = 0; i < sq.getObjects().size(); i++) {
-            IsoObject obj = sq.getObjects().get(i);
-            if (obj instanceof IsoDoor door) {
-                if (door.getNorth() == north) return door;
-            } else if (obj instanceof IsoThumpable thumpable && thumpable.isDoor()) {
-                if (thumpable.getNorth() == north) return thumpable;
-            }
-        }
-        return null;
-    }
-
-    private IsoWindow getWindowOnEdge(IsoGridSquare sq, boolean north) {
-        if (sq == null) return null;
-        for (int i = 0; i < sq.getObjects().size(); i++) {
-            IsoObject obj = sq.getObjects().get(i);
-            if (obj instanceof IsoWindow window && window.getNorth() == north) {
-                return window;
-            }
-        }
-        return null;
+    private static boolean isSolidWall(PropertyContainer props, IsoFlagType collide, IsoFlagType hoppable, IsoFlagType wall, IsoFlagType wallTrans) {
+        if (!props.has(collide)) return false;
+        if (props.has(hoppable)) return false;
+        if (props.has(IsoFlagType.WallNW) || props.has(IsoFlagType.WallSE)) return true;
+        return props.has(wall) || props.has(wallTrans);
     }
 
     private boolean hasStairs(IsoGridSquare sq, boolean north) {
@@ -663,7 +649,7 @@ public class IsoThermalRoom {
         private static final long REFRESH_MS = 1000;
         public static final int CONTRIB_BASE = 0, CONTRIB_WINDOWS = 1, CONTRIB_OPENINGS = 2, CONTRIB_STAIRS = 3, CONTRIB_HEATSOURCES = 4, CONTRIB_GROUND = 5, CONTRIB_CLIMATE = 6,CONTRIB_COUNT = 7;
 
-        public record Opening(int x, int y, boolean north, String type, boolean outdoorWindow, String state, String curtains, String barricades, String facing, float coefficient, float otherTemp) {}
+        public record Opening(int x, int y, GridSquareEdgeFacingDirection edgeDirection, String type, boolean outdoorWindow, String state, String curtains, String barricades, String facing, float coefficient, float otherTemp) {}
         public record Stair(int bottomX, int bottomY, int bottomZ, int topX, int topY, int topZ, long otherRoomId, float otherTemp) {}
         public record HeatSource(int x, int y, int z, int radius, int temperature, float coefficient) {}
 
@@ -810,7 +796,7 @@ public class IsoThermalRoom {
                 float otherTemp = !opening.isInterRoom() ? outside : RoomTemperatureManager.getInstance().resolveNeighborRoom(opening)
                         .map(IsoThermalRoom::getCurrentTemperature).orElse(Float.NaN);
                 String facing = !opening.isInterRoom() ? "Outside" : opening.neighborRoom != null ? "Room " + opening.neighborRoom.getRoomDef().getID() : "Player region";
-                result.add(new Opening(opening.square().getX(), opening.square().getY(), opening.north, opening.type(), opening.isOutdoorWindow(), states[0], states.length > 1 ? states[1] : "", opening.window() != null ? getBarricadeState(opening.window()) : "", facing, IsoThermalRoom.this.effectiveCoefficient(opening), otherTemp));
+                result.add(new Opening(opening.square().getX(), opening.square().getY(), opening.edgeDirection(), opening.type(), opening.isOutdoorWindow(), states[0], states.length > 1 ? states[1] : "", opening.window() != null ? getBarricadeState(opening.window()) : "", facing, IsoThermalRoom.this.effectiveCoefficient(opening), otherTemp));
             }
             return result;
         }
@@ -864,7 +850,7 @@ public class IsoThermalRoom {
             for (Opening o : openings) {
                 b.putInt(o.x());
                 b.putInt(o.y());
-                b.putBoolean(o.north());
+                b.putEnum(o.edgeDirection());
                 b.putUTF(o.type());
                 b.putBoolean(o.outdoorWindow());
                 b.putUTF(o.state());
@@ -930,7 +916,7 @@ public class IsoThermalRoom {
 
             List<Opening> openings = new ArrayList<>();
             for (int i = 0, n = b.getInt(); i < n; i++) {
-                openings.add(new Opening(b.getInt(), b.getInt(), b.getBoolean(), b.getUTF(), b.getBoolean(),
+                openings.add(new Opening(b.getInt(), b.getInt(), b.getEnum(GridSquareEdgeFacingDirection.class), b.getUTF(), b.getBoolean(),
                         b.getUTF(), b.getUTF(), b.getUTF(), b.getUTF(), b.getFloat(), b.getFloat()));
             }
             List<Stair> stairs = new ArrayList<>();
