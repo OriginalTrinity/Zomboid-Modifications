@@ -8,6 +8,7 @@ import zombie.core.Core;
 import zombie.core.SpriteRenderer;
 import zombie.debug.DebugType;
 import zombie.debug.LogSeverity;
+import zombie.input.Mouse;
 import zombie.ui.TextManager;
 import zombie.ui.UIFont;
 
@@ -42,10 +43,9 @@ public class PatchUpdater {
     private static final UIFont TITLE_FONT = UIFont.Large;
     private static final UIFont BODY_FONT = UIFont.Medium;
     private static final int PADDING = 14, ACCENT_WIDTH = 6, BORDER = 2, MARGIN = 20, GAP = 10, MIN_WIDTH = 380;
-
     private static final long PULSE_PERIOD_MILLIS = 1200;
     private static final int PULSE_COUNT = 5;
-
+    private static final int CLOSE_SIZE = 22;
 
     private static volatile Notice statusNotice;
     private static volatile Notice appliedNotice;
@@ -403,16 +403,16 @@ public class PatchUpdater {
     public static void renderMainMenuNotice() {
         int y = MARGIN;
         Notice applied = appliedNotice;
-        if (applied != null) y = renderNotice(applied, y) + GAP;
+        if (applied != null && !applied.isDismissed()) y = renderNotice(applied, y) + GAP;
         Notice status = statusNotice;
-        if (status != null) renderNotice(status, y);
+        if (status != null && !status.isDismissed()) renderNotice(status, y);
     }
 
     private static int renderNotice(Notice notice, int y) {
         TextManager text = TextManager.instance;
         int titleHeight = text.getFontHeight(TITLE_FONT);
         int lineHeight = text.getFontHeight(BODY_FONT);
-        int contentWidth = text.MeasureStringX(TITLE_FONT, notice.title());
+        int contentWidth = text.MeasureStringX(TITLE_FONT, notice.title()) + GAP + CLOSE_SIZE;
         for (String line : notice.body()) {
             contentWidth = Math.max(contentWidth, text.MeasureStringX(BODY_FONT, line));
         }
@@ -441,6 +441,20 @@ public class PatchUpdater {
             text.DrawString(BODY_FONT, textX + (note ? 12 : 0), textY, note ? line.substring(2) : line, shade, shade, shade, 1.0);
             textY += lineHeight;
         }
+
+        int closeX = x + width - BORDER - PADDING / 2 - CLOSE_SIZE;
+        int closeY = y + PADDING + (titleHeight - CLOSE_SIZE) / 2;
+        int mouseX = Mouse.getXA(), mouseY = Mouse.getYA();
+        boolean hovered = mouseX >= closeX && mouseX < closeX + CLOSE_SIZE && mouseY >= closeY && mouseY < closeY + CLOSE_SIZE;
+        if (hovered) {
+            sprites.renderi(null, closeX, closeY, CLOSE_SIZE, CLOSE_SIZE, 1.0f, 1.0f, 1.0f, 0.12f, null);
+            if (Mouse.isLeftPressed()) notice.dismiss();
+        }
+        float closeShade = hovered ? 1.0f : 0.55f;
+        int glyphX = closeX + (CLOSE_SIZE - text.MeasureStringX(BODY_FONT, "X")) / 2;
+        int glyphY = closeY + (CLOSE_SIZE - lineHeight) / 2;
+        text.DrawString(BODY_FONT, glyphX, glyphY, "X", closeShade, closeShade, closeShade, 1.0);
+
         return y + height;
     }
 
@@ -488,6 +502,7 @@ public class PatchUpdater {
         private final String title;
         private final List<String> body;
         private long firstShownMillis = -1; // render thread only
+        private boolean dismissed;
 
         private Notice(Type type, String title, List<String> body) {
             this.type = type;
@@ -505,6 +520,14 @@ public class PatchUpdater {
 
         List<String> body() {
             return this.body;
+        }
+
+        public boolean isDismissed() {
+            return this.dismissed;
+        }
+
+        public void dismiss() {
+            this.dismissed = true;
         }
 
         private enum Type {
