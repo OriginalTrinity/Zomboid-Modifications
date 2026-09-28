@@ -46,6 +46,7 @@ import java.util.function.Function;
 public class RoomTemperatureManager {
 
     private static final long PERSISTENCE_REFRESH_MS = 5000;
+    private static final int RESTORE_RETRY_INTERVALS = 12;
     private static RoomTemperatureManager instance;
     private volatile int regionGeneration;
 
@@ -63,6 +64,7 @@ public class RoomTemperatureManager {
     private final RoomTileScanWorker tileScanWorker;
     private final Set<Long> pendingPlayerRoomChunks;
     private final HashMap<Long, Pair<Float, Double>> unloadedTemperatureCache;
+    private final HashMap<PersistentThermalData, Integer> restoreBackoff;
 
     private double lastApplyWorldHours = -1;
     private double lastCalculateWorldHours = -1;
@@ -86,6 +88,7 @@ public class RoomTemperatureManager {
         this.rescanInProgress = ConcurrentHashMap.newKeySet();
         this.pendingPlayerRoomChunks = new HashSet<>();
         this.unloadedTemperatureCache = new HashMap<>();
+        this.restoreBackoff = new HashMap<>();
         this.tileScanWorker = new RoomTileScanWorker();
         this.tileScanWorker.start();
         ThermalConfig.load();
@@ -117,6 +120,7 @@ public class RoomTemperatureManager {
 
         if (now - this.lastCalculateWorldHours >= ThermalConfig.TEMP_CALCULATE_INTERVAL_HOURS) {
             this.retryPendingPlayerRoomChunks();
+            this.restoreMissingPlayerRooms();
             IsoGridSquare changed;
             while ((changed = this.pendingSquareChanges.poll()) != null) {
                 this.processSquareChanged(changed);
@@ -126,7 +130,7 @@ public class RoomTemperatureManager {
                 this.pendingRescanRooms.removeAll(toRescan);
                 for (IsoThermalRoom room : toRescan) {
                     if (this.isRegionStale(room)) {
-                        this.evictStaleRoom(room);
+                        this.evictStaleRoom(room, "region stale before rescan: " + this.describeRoomRegion(room));
                         continue;
                     }
                     if (!room.isPlayerRoom()) {
@@ -182,7 +186,7 @@ public class RoomTemperatureManager {
             if (sq == null) continue;
             Optional<IsoThermalRoom> existing = this.playerRoomAt(sq);
             if (existing.isPresent()) {
-                if (this.isRegionStale(existing.get())) this.evictStaleRoom(existing.get());
+                if (this.isRegionStale(existing.get())) this.evictStaleRoom(existing.get(), "region stale after structure change: " + this.describeRoomRegion(existing.get()));
                 else this.pendingRescanRooms.add(existing.get()); // region may have grown or shrunk
                 continue;
             }
@@ -227,7 +231,7 @@ public class RoomTemperatureManager {
             roomChunkLink = optional.get();
 
             if (roomChunkLink.getLoadedChunks() == roomChunkLink.getTotalChunks()) {
-                this.getSimulatedRoomById(def.getID()).ifPresent(this::evictSimulatedRoom);
+                this.getSimulatedRoomById(def.getID()).ifPresent(room -> this.evictSimulatedRoom(room, "chunk " + wx + "," + wy + " unloaded"));
             }
             roomChunkLink.decrementLoadedChunks();
             if (roomChunkLink.loadedChunks < 1) {
@@ -240,7 +244,7 @@ public class RoomTemperatureManager {
         for (IsoThermalRoom room : this.simulatedRooms) {
             if (room.isPlayerRoom() && room.occupiesChunk(wx, wy)) toEvict.add(room);
         }
-        toEvict.forEach(this::evictSimulatedRoom);
+        toEvict.forEach(room -> this.evictSimulatedRoom(room, "chunk " + wx + "," + wy + " unloaded"));
     }
 
     private ArrayList<RoomDef> getRoomsTouchedByChunk(int wx, int wy) {
@@ -445,19 +449,89 @@ public class RoomTemperatureManager {
         }
     }
 
-    private void evictSimulatedRoom(IsoThermalRoom room) {
+    private void evictSimulatedRoom(IsoThermalRoom room, String reason) {
         if (!this.simulatedRooms.remove(room)) return;
         this.notifyRoomRemoved(room.getId());
         PersistentThermalData ptd = PersistentThermalData.of(room);
         this.staleRooms.remove(ptd);
         this.staleRooms.add(ptd);
+        if (room.isPlayerRoom()) {
+            DebugType.General.println("RoomTemperature: dropped player room %d at %d,%d,%d (%d squares): %s",
+                    room.getId(), room.getX(), room.getY(), room.getZ(), room.getSquares().size(), reason);
+        }
     }
 
-    private void evictStaleRoom(IsoThermalRoom room) {
-        this.evictSimulatedRoom(room);
+    private void evictStaleRoom(IsoThermalRoom room, String reason) {
+        this.evictSimulatedRoom(room, reason);
         if (!room.isPlayerRoom()) return;
         for (long hash : room.getSquareHashes()) {
             this.pendingPlayerRoomChunks.add(chunkHash(IsoThermalRoom.unpackX(hash) / 8, IsoThermalRoom.unpackY(hash) / 8));
+        }
+    }
+
+    /** Why the room's region no longer counts, checked at its first square. The coordinates show if that square object got reused elsewhere. */
+    private String describeRoomRegion(IsoThermalRoom room) {
+        if (room.getSquares().isEmpty()) return "no squares";
+        IsoGridSquare sq = room.getSquares().get(0);
+        return this.describeSquareState(sq.getX(), sq.getY(), sq.getZ());
+    }
+
+    private String describeSquareState(int x, int y, int z) {
+        IsoGridSquare sq = IsoWorld.instance.getCell().getGridSquare(x, y, z);
+        String at = " at " + x + "," + y + "," + z;
+        if (sq == null) return "square not loaded" + at;
+        if (IsoRegions.getDataChunk(Math.floorDiv(x, 8), Math.floorDiv(y, 8)) == null) return "no region data for the chunk" + at;
+        if (getMappedRoom(sq) != null) return "square belongs to a mapped room" + at;
+        if (!(sq.getIsoWorldRegion() instanceof IsoWorldRegion region)) return "no region" + at;
+        if (region.getID() < 0) return "region released" + at;
+        if (!region.isPlayerRoom()) {
+            return String.format("region %d not a player room (enclosed=%s, roofed %d/%d)%s",
+                    region.getID(), region.isEnclosed(), region.getRoofCnt(), region.getSquareSize(), at);
+        }
+        if (!this.allChunksLoaded(region)) return "region spans unloaded chunks" + at;
+        return "valid player room region that wasn't picked up" + at;
+    }
+
+    /**
+     * Safety net for player rooms that have saved data and a loaded area but aren't simulated, whether dropped by mistake
+     * or missed when their chunks loaded (e.g. after a server restart). Logs why when a room can't be found.
+     */
+    private void restoreMissingPlayerRooms() {
+        IsoCell cell = IsoWorld.instance.getCell();
+        if (cell == null) return;
+        for (PersistentThermalData ptd : new ArrayList<>(this.staleRooms)) {
+            if (!ptd.isPlayerRoom()) continue;
+            if (cell.getChunkForGridSquare(ptd.x(), ptd.y(), 0) == null) {
+                this.restoreBackoff.remove(ptd); // not loaded, chunk loading handles it
+                continue;
+            }
+            IsoGridSquare corner = cell.getGridSquare(ptd.x(), ptd.y(), ptd.z());
+            if (corner != null && this.playerRoomAt(corner).isPresent()) continue; // simulated under a different saved record
+
+            int wait = this.restoreBackoff.getOrDefault(ptd, 0);
+            if (wait > 0) {
+                this.restoreBackoff.put(ptd, wait - 1);
+                continue;
+            }
+
+            // The saved position is the room's minimum x and y, so its squares lie in this chunk or east/south of it
+            int wx = Math.floorDiv(ptd.x(), 8);
+            int wy = Math.floorDiv(ptd.y(), 8);
+            for (int dx = 0; dx <= 1; dx++) {
+                for (int dy = 0; dy <= 1; dy++) {
+                    if (cell.getChunkForGridSquare((wx + dx) * 8, (wy + dy) * 8, 0) != null) this.discoverPlayerRoomsInChunk(wx + dx, wy + dy);
+                }
+            }
+
+            if (!this.staleRooms.contains(ptd)) {
+                DebugType.General.println("RoomTemperature: restored player room at %d,%d,%d from saved data", ptd.x(), ptd.y(), ptd.z());
+                this.restoreBackoff.remove(ptd);
+            } else {
+                if (!this.restoreBackoff.containsKey(ptd)) {
+                    DebugType.General.println("RoomTemperature: saved player room is loaded but not simulated: %s", this.describeSquareState(ptd.x(), ptd.y(), ptd.z()));
+                }
+                this.restoreBackoff.put(ptd, RESTORE_RETRY_INTERVALS);
+            }
         }
     }
 
@@ -772,6 +846,7 @@ public class RoomTemperatureManager {
         this.playerSyncedTemps.clear();
         this.pendingRoomRequests.clear();
         this.pendingPlayerRoomChunks.clear();
+        this.restoreBackoff.clear();
         this.lastApplyWorldHours = -1;
         this.lastCalculateWorldHours = -1;
         this.lastCleanUpMillis = -1;
@@ -1263,10 +1338,19 @@ public class RoomTemperatureManager {
                 if (generation != RoomTemperatureManager.this.regionGeneration) {
                     // Regions were swapped mid-scan, so the result may mix old and new region data
                     RoomTemperatureManager.this.pendingRescanRooms.add(room);
-                } else if (newSquares.isEmpty() || RoomTemperatureManager.this.isRegionStale(room)) {
-                    RoomTemperatureManager.this.evictStaleRoom(room);
-                } else if (RoomTemperatureManager.this.simulatedRooms.stream().anyMatch(r -> r != room && r.isPlayerRoom() && r.containsSquare(newSquares.get(0)))) {
-                    RoomTemperatureManager.this.evictSimulatedRoom(room); // regions merged, another room already covers this one
+                    return;
+                }
+                if (newSquares.isEmpty() || RoomTemperatureManager.this.isRegionStale(room)) {
+                    String reason = newSquares.isEmpty() ? "rescan found no squares" : "region stale after rescan: " + RoomTemperatureManager.this.describeRoomRegion(room);
+                    RoomTemperatureManager.this.evictStaleRoom(room, reason);
+                    return;
+                }
+                Optional<IsoThermalRoom> covering = RoomTemperatureManager.this.simulatedRooms.stream()
+                        .filter(r -> r != room && r.isPlayerRoom() && r.containsSquare(newSquares.get(0)))
+                        .findFirst();
+                if (covering.isPresent()) {
+                    // Regions merged, another room already covers this one
+                    RoomTemperatureManager.this.evictSimulatedRoom(room, "merged into room " + covering.get().getId());
                 } else if (room.applyRescannedSquares(newSquares)) {
                     RoomTemperatureManager.this.invalidateSyncedRoom(room.getId());
                 }
