@@ -93,6 +93,7 @@ public class IsoFireplace extends IsoObject {
         this.lit = input.get() != 0;
         this.lastUpdateTime = input.getFloat();
         this.minutesSinceExtinguished = input.getInt();
+        this.smouldering = !this.lit && this.minutesSinceExtinguished != -1;
     }
 
     @Override
@@ -135,6 +136,7 @@ public class IsoFireplace extends IsoObject {
     public void turnOn() {
         if (!this.isLit()) {
             this.setLit(true);
+            this.smouldering = false;
             if (this.getContainer() != null) {
                 this.getContainer().addItemsToProcessItems();
             }
@@ -160,6 +162,7 @@ public class IsoFireplace extends IsoObject {
             this.setLit(false);
             if (this.hasFuel()) {
                 this.minutesSinceExtinguished = 0;
+                this.smouldering = true;
             }
         }
     }
@@ -366,6 +369,8 @@ public class IsoFireplace extends IsoObject {
             boolean oldHasFuel = this.hasFuel();
             boolean oldIsLit = this.isLit();
             int oldRadius = this.calcLightRadius();
+            int oldFuel = this.getFuelAmount();
+            boolean oldSmouldering = this.smouldering;
             float elapsedHours = (float)GameTime.getInstance().getWorldAgeHours();
             if (this.lastUpdateTime < 0.0F) {
                 this.lastUpdateTime = elapsedHours;
@@ -401,7 +406,7 @@ public class IsoFireplace extends IsoObject {
 
             this.lastUpdateTime = elapsedHours;
             if (GameServer.server) {
-                if (oldHasFuel != this.hasFuel() || oldIsLit != this.isLit() || oldRadius != this.calcLightRadius()) {
+                if (oldHasFuel != this.hasFuel() || oldIsLit != this.isLit() || oldRadius != this.calcLightRadius() || oldFuel != this.getFuelAmount() || oldSmouldering != this.smouldering) {
                     this.sendObjectChange(IsoObjectChange.STATE);
                 }
 
@@ -479,6 +484,7 @@ public class IsoFireplace extends IsoObject {
         if (change == IsoObjectChange.STATE) {
             bb.putInt(this.getFuelAmount());
             bb.putBoolean(this.isLit());
+            bb.putBoolean(this.smouldering);
         }
     }
 
@@ -488,6 +494,7 @@ public class IsoFireplace extends IsoObject {
             boolean wasLit = this.isLit();
             this.setFuelAmount(bb.getInt());
             this.setLit(bb.getBoolean());
+            if (bb.remaining() > 0) this.smouldering = bb.getBoolean();
             if (!wasLit && this.isLit() && this.getContainer() != null) {
                 this.getContainer().addItemsToProcessItems();
             }

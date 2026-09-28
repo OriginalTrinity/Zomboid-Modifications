@@ -98,6 +98,7 @@ public class IsoBarbecue extends IsoObject {
         this.lit = input.get() != 0;
         this.lastUpdateTime = input.getFloat();
         this.minutesSinceExtinguished = input.getInt();
+        this.isSmouldering = !this.lit && this.minutesSinceExtinguished != -1;
         if (input.get() != 0) {
             this.normalIsoSprite = IsoSprite.getSprite(IsoSpriteManager.instance, input.getInt());
         }
@@ -246,6 +247,7 @@ public class IsoBarbecue extends IsoObject {
     public void turnOn() {
         if (!this.isLit()) {
             this.setLit(true);
+            this.isSmouldering = false;
             if (this.getContainer() != null) {
                 this.getContainer().addItemsToProcessItems();
             }
@@ -271,6 +273,7 @@ public class IsoBarbecue extends IsoObject {
             this.setLit(false);
             if (this.hasFuel() && !this.isPropaneBBQ()) {
                 this.minutesSinceExtinguished = 0;
+                this.isSmouldering = true;
             }
         }
     }
@@ -334,6 +337,8 @@ public class IsoBarbecue extends IsoObject {
         if (!GameClient.client) {
             boolean oldHasFuel = this.hasFuel();
             boolean oldIsLit = this.isLit();
+            int oldFuel = this.getFuelAmount();
+            boolean oldSmouldering = this.isSmouldering;
             float elapsedHours = (float)GameTime.getInstance().getWorldAgeHours();
             if (this.lastUpdateTime < 0.0F) {
                 this.lastUpdateTime = elapsedHours;
@@ -369,7 +374,7 @@ public class IsoBarbecue extends IsoObject {
 
             this.lastUpdateTime = elapsedHours;
             if (GameServer.server) {
-                if (oldHasFuel != this.hasFuel() || oldIsLit != this.isLit()) {
+                if (oldHasFuel != this.hasFuel() || oldIsLit != this.isLit() || oldFuel != this.getFuelAmount() || oldSmouldering != this.isSmouldering) {
                     this.sendObjectChange(IsoObjectChange.STATE);
                 }
 
@@ -469,6 +474,7 @@ public class IsoBarbecue extends IsoObject {
             byteBuffer.putInt(this.getFuelAmount());
             byteBuffer.putBoolean(this.isLit());
             byteBuffer.putBoolean(this.hasPropaneTank());
+            byteBuffer.putBoolean(this.isSmouldering);
         }
     }
 
@@ -479,6 +485,7 @@ public class IsoBarbecue extends IsoObject {
             this.setFuelAmount(byteBuffer.getInt());
             this.setLit(byteBuffer.getBoolean());
             this.hasPropaneTank = byteBuffer.getBoolean();
+            if (byteBuffer.remaining() > 0) this.isSmouldering = byteBuffer.getBoolean();
             if (!wasLit && this.isLit() && this.getContainer() != null) {
                 this.getContainer().addItemsToProcessItems();
             }
