@@ -126,7 +126,7 @@ public class PatchUpdater {
     }
 
     private static void check() {
-        boolean found = false;
+        boolean downloaded = false;
         try {
             HttpClient client = HttpClient.newBuilder()
                     .followRedirects(HttpClient.Redirect.NORMAL)
@@ -137,11 +137,11 @@ public class PatchUpdater {
             if (infoBytes == null) {
                 throw new IOException(PACK_INFO + " missing - Drive may have served an error page instead of the pack");
             }
+            downloaded = true;
             PackInfo latest = PackInfo.parse(new String(infoBytes, StandardCharsets.UTF_8));
 
             List<String> changes = describeChanges(readInstalled(), latest);
             if (changes.isEmpty()) return;
-            found = true;
 
             String running = runningGameVersion();
             if (!latest.gameVersion().equals(running)) {
@@ -159,7 +159,7 @@ public class PatchUpdater {
             statusNotice = new Notice(Notice.Type.PENDING, PACK_NAME + " update downloaded", body);
         } catch (Exception e) {
             DebugType.General.printException(e, PACK_NAME + " update failed", LogSeverity.Warning);
-            statusNotice = found ? new Notice(Notice.Type.WARNING, PACK_NAME + " update failed!", List.of("See console.txt for details.")) : null;
+            statusNotice = downloaded ? new Notice(Notice.Type.WARNING, PACK_NAME + " update failed!", List.of("See console.txt for details.")) : null;
         }
     }
 
