@@ -94,6 +94,7 @@ public class NetworkZombiePacker {
                 }
 
                 zombie.zombiePacket.copy(this.packet);
+                zombie.zombiePacket.health = (short) (zombie.getHealth() * 1000.0f);
                 zombie.zombiePacketUpdated = true;
                 synchronized (this.zombiesReceived) {
                     this.zombiesReceived.add(zombie);
@@ -240,7 +241,14 @@ public class NetworkZombiePacker {
         networkAi.targetY = this.packet.y;
         networkAi.targetZ = this.packet.z;
         networkAi.predictionType = this.packet.predictionType;
-        zombie.setHealth(this.packet.health / 1000.0F);
+        // Zombies don't heal, so never let the owner raise the server's health.
+        // A client that just took ownership may still hold a stale copy that never saw hits applied by the server.
+        float reportedHealth = this.packet.health / 1000.0f;
+        if (reportedHealth < zombie.getHealth()) {
+            zombie.setHealth(reportedHealth);
+        } else if (reportedHealth > zombie.getHealth()) {
+            DebugType.Multiplayer.noise("Zombie %d health report %f ignored, server has %f", zombie.getOnlineID(), reportedHealth, zombie.getHealth());
+        }
         zombie.setSpeedMod(this.packet.speedMod / 1000.0F);
         if (this.packet.target == -1) {
             zombie.setTargetSeenTime(0.0F);

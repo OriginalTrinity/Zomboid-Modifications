@@ -34,6 +34,7 @@ import zombie.network.packets.character.ZombieSimulationPacket;
 
 public class NetworkZombieSimulator {
     public static final int MAX_ZOMBIES_PER_UPDATE = 300;
+    private static final float REMOTE_MIN_HEALTH = 0.001f;
     private static final NetworkZombieSimulator instance = new NetworkZombieSimulator();
     private static final ZombiePacket zombiePacket = new ZombiePacket();
     public final ArrayList<Short> unknownZombies = new ArrayList<>();
@@ -252,7 +253,13 @@ public class NetworkZombieSimulator {
                     }
                 }
 
+                float serverHealth = packet.health / 1000.0f;
                 if (getInstance().isZombieSimulated(zombie.onlineId)) {
+                    // The server only sends zombies we own on an ownership change or a request, adopt its health if lower
+                    if (serverHealth > 0.0f && serverHealth < zombie.getHealth()) {
+                        zombie.setHealth(serverHealth);
+                    }
+
                     zombie.setOwner(GameClient.connection);
                     zombie.setOwnerPlayer(IsoPlayer.getInstance());
                     return;
@@ -266,6 +273,9 @@ public class NetworkZombieSimulator {
                     networkAi.mindSync.parse(packet);
                 }
 
+                // Keep remote copies current so we don't bring stale health along if we become the owner.
+                // Stay above zero, death is decided by the server and must not be triggered locally.
+                zombie.setHealth(Math.max(serverHealth, REMOTE_MIN_HEALTH));
                 zombie.lastRemoteUpdate = 0;
                 if (!IsoWorld.instance.currentCell.getZombieList().contains(zombie)) {
                     IsoWorld.instance.currentCell.getZombieList().add(zombie);
