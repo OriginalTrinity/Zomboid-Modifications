@@ -205,7 +205,8 @@ public final class FBORenderSnow {
                 this.snowGridCur.frac = -1;
             }
 
-            if (worldX != this.snowGridCur.worldX || worldY != this.snowGridCur.worldY || fracTarget != this.snowGridCur.frac) {
+            boolean recaching = PerformanceSettings.fboRenderChunk && FBORenderChunkManager.instance.isCaching();
+            if (recaching || worldX != this.snowGridCur.worldX || worldY != this.snowGridCur.worldY ||fracTarget != this.snowGridCur.frac) {
                 this.snowGridCur.init(worldX, worldY, level, fracTarget);
             }
         }
@@ -269,9 +270,15 @@ public final class FBORenderSnow {
 
                     for (int i = 0; i < IsoCell.SolidFloor.size(); i++) {
                         IsoGridSquare square = IsoCell.SolidFloor.get(i);
-                        if (square.room == null && square.getProperties().has(IsoFlagType.exterior) && square.getProperties().has(IsoFlagType.solidfloor)) {
+                        boolean holdsSnow = canHoldSnow(square);
+                        int snowX = snowGridCur.worldToSelfX(square.getX());
+                        int snowY = snowGridCur.worldToSelfY(square.getY());
+                        boolean coveredTransition = !holdsSnow && square.getProperties().has(IsoFlagType.solidfloor)
+                                && !square.getProperties().has(IsoFlagType.water) && snowGridCur.grid[snowX][snowY][0] != null;
+
+                        if (holdsSnow || coveredTransition) {
                             int shore;
-                            if (square.getProperties().has(IsoFlagType.water) || square.getWater() != null && square.getWater().isValid()) {
+                            if (holdsSnow && (square.getProperties().has(IsoFlagType.water) || square.getWater() != null && square.getWater().isValid())) {
                                 shore = this.getShoreInt(square);
                                 if (shore == 0) {
                                     continue;
@@ -280,8 +287,6 @@ public final class FBORenderSnow {
                                 shore = 0;
                             }
 
-                            int snowX = snowGridCur.worldToSelfX(square.getX());
-                            int snowY = snowGridCur.worldToSelfY(square.getY());
                             float sx = IsoUtils.XToScreen(square.getX(), square.getY(), zza, 0);
                             float sy = IsoUtils.YToScreen(square.getX(), square.getY(), zza, 0);
                             sx -= camOffX;
@@ -499,6 +504,15 @@ public final class FBORenderSnow {
         return square != null && !square.getProperties().has(IsoFlagType.water) && !bShore;
     }
 
+    private static boolean canHoldSnow(IsoGridSquare square) {
+        return square.room == null && square.getProperties().has(IsoFlagType.exterior) && square.getProperties().has(IsoFlagType.solidfloor);
+    }
+
+    private static boolean isOpenTo(IsoGridSquare square, IsoDirections dir) {
+        IsoGridSquare other = square.getAdjacentSquare(dir);
+        return other != null && !square.isSomethingTo(other);
+    }
+
     public static final class ChunkLevel {
         public final IsoChunk chunk;
         private FBORenderSnow.SnowGrid snowGrid;
@@ -574,8 +588,12 @@ public final class FBORenderSnow {
                                 this.gridType[x][y][sx] = -1;
                             }
 
+                            IsoGridSquare square = IsoWorld.instance.currentCell.getGridSquare(this.worldX + x, this.worldY + y, level);
+                            if (square != null && !FBORenderSnow.canHoldSnow(square)) {
+                                continue;
+                            }
+
                             if (level == 0) {
-                                IsoGridSquare square = IsoWorld.instance.currentCell.getGridSquare(this.worldX + x, this.worldY + y, level);
                                 if (square == null) {
                                     continue;
                                 }
@@ -611,10 +629,12 @@ public final class FBORenderSnow {
                         for (int x = 0; x < this.w; x++) {
                             Texture tex = this.grid[x][y][0];
                             if (tex == null) {
-                                boolean bN = this.check(x, y - 1);
-                                boolean bS = this.check(x, y + 1);
-                                boolean bW = this.check(x - 1, y);
-                                boolean bE = this.check(x + 1, y);
+                                IsoGridSquare square = IsoWorld.instance.currentCell.getGridSquare(this.worldX + x, this.worldY + y, level);
+                                boolean covered = square != null && !FBORenderSnow.canHoldSnow(square);
+                                boolean bN = this.check(x, y - 1) && (!covered || FBORenderSnow.isOpenTo(square, IsoDirections.N));
+                                boolean bS = this.check(x, y + 1) && (!covered || FBORenderSnow.isOpenTo(square, IsoDirections.S));
+                                boolean bW = this.check(x - 1, y) && (!covered || FBORenderSnow.isOpenTo(square, IsoDirections.W));
+                                boolean bE = this.check(x + 1, y) && (!covered || FBORenderSnow.isOpenTo(square, IsoDirections.E));
                                 int count = 0;
                                 if (bN) {
                                     count++;
