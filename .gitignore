@@ -45,6 +45,8 @@
 !/zombie/characters/ClothingWetness.java
 !/zombie/iso/objects/IsoFireplace.java
 !/zombie/iso/objects/IsoBarbecue.java
+!/zombie/popman/NetworkZombiePacker.java
+!/zombie/popman/NetworkZombieSimulator.java
 
 # --- Modified vanilla files: networking ---
 !zombie/network/packets/vehicle/VehiclePhysicsUnreliablePacket.java
