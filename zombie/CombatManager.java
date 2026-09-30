@@ -3053,7 +3053,7 @@ public final class CombatManager {
             case SHOT_SHOULDER_STEP_L:
             case SHOT_SHOULDER_R:
             case SHOT_SHOULDER_STEP_R:
-                boolean lower = Rand.Next(2) == 0;
+                lower = Rand.Next(2) == 0;
                 if (shotDirection == ShotDirection.LEFT) {
                     return lower ? RagdollBodyPart.BODYPART_LEFT_LOWER_ARM : RagdollBodyPart.BODYPART_LEFT_UPPER_ARM;
                 }
@@ -3433,39 +3433,42 @@ public final class CombatManager {
     ) {
         int randomHitReaction = Rand.Next(2);
 
-        HitReaction hitReaction = switch (targetedBodyPart) {
+        HitReaction hitReaction;
+        switch (targetedBodyPart) {
             case BODYPART_PELVIS -> {
-                yield HitReaction.SHOT_BELLY_STEP;
+                hitReaction = HitReaction.SHOT_BELLY_STEP;
                 if (shotDirection == ShotDirection.NORTH) {
                     if (target.isHitFromBehind()) {
-                        yield HitReaction.SHOT_BELLY_STEP_BEHIND;
+                        hitReaction = HitReaction.SHOT_BELLY_STEP_BEHIND;
                     } else if (randomHitReaction == 0) {
-                        yield HitReaction.SHOT_BELLY;
+                        hitReaction = HitReaction.SHOT_BELLY;
                     }
                 }
             }
             case BODYPART_SPINE -> {
-                yield HitReaction.SHOT_CHEST;
+                hitReaction = HitReaction.SHOT_CHEST;
                 if (shotDirection == ShotDirection.LEFT) {
-                    yield randomHitReaction == 0 ? HitReaction.SHOT_CHEST_L : HitReaction.SHOT_CHEST_STEP_L;
+                    hitReaction = randomHitReaction == 0 ? HitReaction.SHOT_CHEST_L : HitReaction.SHOT_CHEST_STEP_L;
                 } else if (shotDirection == ShotDirection.RIGHT) {
-                    yield randomHitReaction == 0 ? HitReaction.SHOT_CHEST_R : HitReaction.SHOT_CHEST_STEP_R;
+                    hitReaction = randomHitReaction == 0 ? HitReaction.SHOT_CHEST_R : HitReaction.SHOT_CHEST_STEP_R;
                 }
             }
             case BODYPART_HEAD -> {
-                yield randomHitReaction == 0 ? HitReaction.SHOT_HEAD_FWD : HitReaction.SHOT_HEAD_FWD02;
+                hitReaction = randomHitReaction == 0 ? HitReaction.SHOT_HEAD_FWD : HitReaction.SHOT_HEAD_FWD02;
                 if ((shotDirection == ShotDirection.LEFT || shotDirection == ShotDirection.RIGHT) && Rand.Next(4) == 0) {
-                    yield HitReaction.SHOT_HEAD_BWD;
+                    hitReaction = HitReaction.SHOT_HEAD_BWD;
                 }
             }
-            case BODYPART_LEFT_UPPER_LEG, BODYPART_LEFT_LOWER_LEG -> HitReaction.SHOT_LEG_L;
-            case BODYPART_RIGHT_UPPER_LEG, BODYPART_RIGHT_LOWER_LEG -> HitReaction.SHOT_LEG_R;
-            case BODYPART_LEFT_UPPER_ARM, BODYPART_LEFT_LOWER_ARM -> target.isHitFromBehind() ? HitReaction.SHOT_SHOULDER_STEP_L : HitReaction.SHOT_SHOULDER_L;
-            case BODYPART_RIGHT_UPPER_ARM, BODYPART_RIGHT_LOWER_ARM -> target.isHitFromBehind()
+            case BODYPART_LEFT_UPPER_LEG, BODYPART_LEFT_LOWER_LEG -> hitReaction = HitReaction.SHOT_LEG_L;
+            case BODYPART_RIGHT_UPPER_LEG, BODYPART_RIGHT_LOWER_LEG -> hitReaction = HitReaction.SHOT_LEG_R;
+            case BODYPART_LEFT_UPPER_ARM, BODYPART_LEFT_LOWER_ARM -> hitReaction = target.isHitFromBehind()
+                ? HitReaction.SHOT_SHOULDER_STEP_L
+                : HitReaction.SHOT_SHOULDER_L;
+            case BODYPART_RIGHT_UPPER_ARM, BODYPART_RIGHT_LOWER_ARM -> hitReaction = target.isHitFromBehind()
                 ? HitReaction.SHOT_SHOULDER_STEP_R
                 : HitReaction.SHOT_SHOULDER_R;
             default -> throw new IllegalStateException("Unexpected value: " + targetedBodyPart);
-        };
+        }
         this.applyBlood(handWeapon, target, hitReaction, shotDirection);
         if (target instanceof IsoZombie isoZombie && isoZombie.getEatBodyTarget() != null) {
             hitReaction = target.getVariableBoolean("onknees") ? HitReaction.ON_KNEES : HitReaction.EATING;
