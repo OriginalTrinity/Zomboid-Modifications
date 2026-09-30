@@ -810,6 +810,9 @@ public final class CombatManager {
                         this.splash(hitObject, weapon, owner);
                         hitHead = Rand.Next(2);
                     } else if (owner.isAimAtFloor() && !weapon.isRanged()) {
+                        // Target selection already validated range, angle and LOS for the stomped target, so the bone
+                        // sweep below may only decide where it hits, not whether. Other prone zombies still need a bone hit.
+                        boolean isStompTarget = ownerLiving.isDoShove() && hitObject == owner.getAttackVars().targetOnGround.getObject();
                         if (ownerPlayer == null || ownerPlayer.isLocalPlayer()) {
                             if (!StringUtils.isNullOrEmpty(weapon.getHitFloorSound())) {
                                 owner.getEmitter().stopSoundByName(weapon.getSwingSound());
@@ -894,10 +897,12 @@ public final class CombatManager {
                                 }
 
                                 if (bone == -1) {
-                                    continue;
+                                    if (!isStompTarget) {
+                                        continue;
+                                    }
+                                } else {
+                                    hitLegs = true;
                                 }
-
-                                hitLegs = true;
                             }
                         } else {
                             this.splash(hitObject, weapon, owner);
