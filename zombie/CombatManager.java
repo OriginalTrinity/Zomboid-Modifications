@@ -3344,7 +3344,7 @@ public final class CombatManager {
                                         isoPlayer.setAttackType(AttackType.OVERHEAD);
                                     }
 
-                                    if (isoPlayer.getPrimaryHandItem() == null || isoPlayer.getPrimaryHandItem().hasTag(ItemTag.FAKE_SPEAR)) {
+                                    if (isoPlayer.getPrimaryHandItem() == null || !isoPlayer.getPrimaryHandItem().hasTag(ItemTag.FAKE_SPEAR)) {
                                         criticalHitChance += 30.0F;
                                     }
                                 }
