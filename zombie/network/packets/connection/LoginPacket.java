@@ -25,6 +25,7 @@ import zombie.network.ServerWorldDatabase;
 import zombie.network.anticheats.AntiCheat;
 import zombie.network.packets.INetworkPacket;
 import zombie.network.statistics.PingManager;
+import zombie.patchupdater.PatchUpdater;
 
 @PacketSetting(ordering = 0, priority = 1, reliability = 3, requiredCapability = Capability.None, handlingType = 1)
 public class LoginPacket implements INetworkPacket {
@@ -36,24 +37,32 @@ public class LoginPacket implements INetworkPacket {
     String clientVersion;
     @JSONField
     int authType;
+    @JSONField
+    String patchFingerprint;
 
     @Override
     public void processServer(PacketTypes.PacketType packetType, UdpConnection connection) {
         ConnectionManager.log("receive-packet", "login", connection);
         String serverVersion = Core.getInstance().getGameAndBuildVersion();
+        String patchDenial = this.clientVersion.equals(serverVersion) ? PatchUpdater.checkClientPack(this.patchFingerprint) : null;
         if (!this.clientVersion.equals(serverVersion)) {
             LoggerManager.getLogger("user")
-                .write(
-                    "access denied: user \""
-                        + this.username
-                        + "\" client version ("
-                        + this.clientVersion
-                        + ") does not match server version ("
-                        + serverVersion
-                        + ")"
-                );
+                    .write(
+                            "access denied: user \""
+                                    + this.username
+                                    + "\" client version ("
+                                    + this.clientVersion
+                                    + ") does not match server version ("
+                                    + serverVersion
+                                    + ")"
+                    );
             INetworkPacket.send(connection, PacketTypes.PacketType.AccessDenied, "ClientVersionMismatch##" + this.clientVersion + "##" + serverVersion);
             connection.forceDisconnect("access-denied-client-version");
+        } else if (patchDenial != null) {
+            LoggerManager.getLogger("user")
+                    .write("access denied: user \"" + this.username + "\" " + PatchUpdater.PACK_NAME + " mismatch: " + patchDenial);
+            INetworkPacket.send(connection, PacketTypes.PacketType.AccessDenied, patchDenial);
+            connection.forceDisconnect("access-denied-patch-version");
         } else {
             connection.setWasInLoadingQueue(false);
             connection.setIP(connection.getInetSocketAddress().getHostString());
@@ -234,6 +243,7 @@ public class LoginPacket implements INetworkPacket {
         this.password = b.getUTF().trim();
         this.clientVersion = b.getUTF().trim();
         this.authType = b.getInt();
+        this.patchFingerprint = b.remaining() > 0 ? b.getUTF() : null; // missing from unpatched clients
     }
 
     @Override
@@ -242,5 +252,6 @@ public class LoginPacket implements INetworkPacket {
         b.putUTF(GameClient.password);
         b.putUTF(Core.getInstance().getGameAndBuildVersion());
         b.putInt(GameClient.authType);
+        b.putUTF(PatchUpdater.installedFingerprint());
     }
 }

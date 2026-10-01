@@ -1,8 +1,13 @@
 package zombie.patchupdater;
 
+import org.jetbrains.annotations.Nullable;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
+import se.krka.kahlua.luaj.compiler.LuaCompiler;
+import se.krka.kahlua.vm.KahluaTable;
+import se.krka.kahlua.vm.LuaClosure;
+import zombie.Lua.LuaManager;
 import zombie.ZomboidFileSystem;
 import zombie.core.Core;
 import zombie.core.SpriteRenderer;
@@ -25,6 +30,7 @@ import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.time.Duration;
 import java.util.*;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
@@ -52,39 +58,36 @@ public class PatchUpdater {
 
     private static boolean started;
     private static boolean installHookRegistered;
+    private static boolean warnedNoServerManifest;
+    private static volatile boolean updatePending;
+    private static Object guardedMenu; // MainScreen.instance the guard was installed on, render thread only
 
-    private PatchUpdater() {}
+    private static final String MENU_GUARD_LUA = """
+            local function guard(option)
+                if not option or option.patchUpdaterGuarded then return end
+                local original = option.onMouseDown
+                option.patchUpdaterGuarded = true
+                option.onMouseDown = function(item, x, y)
+                    local text = "An update for Trinity's Zomboid Modifications was downloaded,\\\\nbut is only installed when the game restarts.\\\\n\\\\nServers running the update won't let you join until then.\\\\nContinue anyway?"
+                    local modal = ISModalDialog:new(0, 0, 420, 160, text, true, nil, function(_, button)
+                        if button.internal == "YES" then original(item, x, y) end
+                    end)
+                    modal:setX(getCore():getScreenWidth() / 2 - modal:getWidth() / 2)
+                    modal:setY(getCore():getScreenHeight() / 2 - modal:getHeight() / 2)
+                    modal:initialise()
+                    modal:addToUIManager()
+                    modal:setAlwaysOnTop(true)
+                    modal:bringToTop()
+                    modal:setCapture(true)
+                end
+            end
+            local menu = MainScreen.instance
+            guard(menu.latestSaveOption)
+            guard(menu.loadOption)
+            guard(menu.onlineOption)
+            """;
 
-    public record Module(String id, String name, String version, List<String> notes, List<String> files) {}
-
-    public record PackInfo(String gameVersion, Map<String, Module> modules, List<String> obsolete) {
-
-        static PackInfo parse(String json) throws IOException {
-            try {
-                JSONObject root = new JSONObject(normalizeText(json));
-                Map<String, Module> modules = new LinkedHashMap<>();
-                Set<String> owned = new HashSet<>();
-                JSONArray array = root.getJSONArray("modules");
-                for (int i = 0; i < array.length(); i++) {
-                    JSONObject m = array.getJSONObject(i);
-                    List<String> files = patchFiles(m.optJSONArray("files"));
-                    for (String file : files) {
-                        if (!owned.add(file)) throw new IOException(file + " belongs to more than one module");
-                    }
-                    Module module = new Module(m.getString("id"), m.getString("name"), m.getString("version"), strings(m.optJSONArray("notes")), files);
-                    if (modules.put(module.id(), module) != null) throw new IOException("Duplicate module id " + module.id());
-                }
-                return new PackInfo(root.getString("gameVersion"), modules, patchFiles(root.optJSONArray("obsolete")));
-            } catch (JSONException e) {
-                throw new IOException("Malformed " + PACK_INFO, e);
-            }
-        }
-
-        Set<String> files() {
-            Set<String> files = new LinkedHashSet<>();
-            this.modules.values().forEach(module -> files.addAll(module.files()));
-            return files;
-        }
+    private PatchUpdater() {
     }
 
     private static Path workDir() {
@@ -116,6 +119,7 @@ public class PatchUpdater {
         }
         if (Files.isDirectory(stagedDir())) {
             registerInstallOnExit();
+            updatePending = true;
             statusNotice = new Notice(Notice.Type.PENDING, PACK_NAME + ": Update ready!", List.of("Restart the game to apply it"));
             return;
         }
@@ -154,6 +158,7 @@ public class PatchUpdater {
             verifyContents(latest, entries);
             stage(entries, infoBytes, changes);
             registerInstallOnExit();
+            updatePending = true;
             List<String> body = new ArrayList<>(changes.stream().filter(l -> !l.startsWith("  - ")).toList());
             body.add("Restart the game to apply it.");
             statusNotice = new Notice(Notice.Type.PENDING, PACK_NAME + " update downloaded", body);
@@ -252,7 +257,8 @@ public class PatchUpdater {
             while ((entry = in.getNextEntry()) != null) {
                 String name = normalize(entry.getName());
                 if (name.endsWith("/")) continue;
-                if (!name.equals(PACK_INFO) && !isPatchFile(name)) throw new IOException("Unexpected zip entry " + name);
+                if (!name.equals(PACK_INFO) && !isPatchFile(name))
+                    throw new IOException("Unexpected zip entry " + name);
                 entries.put(name, in.readAllBytes());
             }
         }
@@ -401,11 +407,14 @@ public class PatchUpdater {
     }
 
     public static void renderMainMenuNotice() {
+        guardMenu();
         int y = MARGIN;
         Notice applied = appliedNotice;
         if (applied != null && !applied.isDismissed()) y = renderNotice(applied, y) + GAP;
         Notice status = statusNotice;
-        if (status != null && !status.isDismissed()) renderNotice(status, y);
+        if (status != null && !status.isDismissed()) {
+            renderNotice(status, y);
+        }
     }
 
     private static int renderNotice(Notice notice, int y) {
@@ -458,16 +467,11 @@ public class PatchUpdater {
         return y + height;
     }
 
-    /**
-     * 1 at rest, dipping towards 0 and back once per PULSE_PERIOD_MILLIS. Timed from the first frame the notice is
-     * drawn, not when it was created, so a notice set while the player was in-game still pulses on the main menu.
-     * The cosine starts and ends each cycle at 1, so the pulse settles without a jump.
-     */
     private static float pulse(Notice notice) {
         long now = System.currentTimeMillis();
         if (notice.firstShownMillis < 0) notice.firstShownMillis = now;
         long age = now - notice.firstShownMillis;
-        if (age >= PULSE_PERIOD_MILLIS * PULSE_COUNT) return 1.0f;
+        if (notice.type() == Notice.Type.SUCCESS && age >= PULSE_PERIOD_MILLIS * PULSE_COUNT) return 1.0f;
         return (float) (0.5 + 0.5 * Math.cos(2.0 * Math.PI * age / PULSE_PERIOD_MILLIS));
     }
 
@@ -496,7 +500,94 @@ public class PatchUpdater {
         return space < 0 ? version : version.substring(0, space);
     }
 
-    /** A class rather than a record: it remembers when it was first drawn, for the pulse. */
+    public static String installedFingerprint() {
+        PackInfo installed = readInstalled();
+        if (installed == null) return "";
+        return installed.modules.values().stream()
+                .map(module -> module.id() + "=" + module.version())
+                .sorted()
+                .collect(Collectors.joining(","));
+    }
+
+    @Nullable
+    public static String checkClientPack(@Nullable String clientFingerprint) {
+        PackInfo server = readInstalled();
+        if (server == null) {
+            if (!warnedNoServerManifest) {
+                warnedNoServerManifest = true;
+                DebugType.General.warn(PACK_NAME + ": no " + PACK_INFO + " next to the server, skipping the client version check");
+            }
+            return null;
+        }
+        if (clientFingerprint == null) return "ModRequired##" + PACK_NAME + " (latest version)";
+
+        Map<String, String> client = new HashMap<>();
+        for (String pair : clientFingerprint.split(",")) {
+            int split = pair.indexOf('=');
+            if (split > 0) client.put(pair.substring(0, split), pair.substring(split + 1));
+        }
+        List<String> clientSide = new ArrayList<>(), serverSide = new ArrayList<>();
+        for (Module module : server.modules().values()) {
+            String clientVersion = client.remove(module.id());
+            if (!module.version().equals(clientVersion)) {
+                clientSide.add(module.name() + " " + (clientVersion == null ? "missing" : clientVersion));
+                serverSide.add(module.name() + " " + module.version());
+            }
+        }
+        client.forEach((id, version) -> {
+            clientSide.add(id + " " + version);
+            serverSide.add(id + " missing");
+        });
+        if (clientSide.isEmpty()) return null;
+        return "ClientVersionMismatch##" + String.join(", ", clientSide) + "##" + String.join(", ", serverSide);
+    }
+
+    private static void guardMenu() {
+        if (!updatePending || !(LuaManager.env.rawget("MainScreen") instanceof KahluaTable mainScreen)) return;
+        Object menu = mainScreen.rawget("instance");
+        if (menu == null || menu == guardedMenu) return;
+        guardedMenu = menu;
+        try {
+            LuaClosure guard = LuaCompiler.loadstring(MENU_GUARD_LUA, PACK_ID + "-MenuGuard", LuaManager.env);
+            LuaManager.caller.pcallvoid(LuaManager.thread, guard, null);
+        } catch (Exception e) {
+            DebugType.General.printException(e, PACK_NAME + ": couldn't guard the main menu", LogSeverity.Warning);
+        }
+    }
+
+    public record Module(String id, String name, String version, List<String> notes, List<String> files) {}
+
+    public record PackInfo(String gameVersion, Map<String, Module> modules, List<String> obsolete) {
+
+        static PackInfo parse(String json) throws IOException {
+            try {
+                JSONObject root = new JSONObject(normalizeText(json));
+                Map<String, Module> modules = new LinkedHashMap<>();
+                Set<String> owned = new HashSet<>();
+                JSONArray array = root.getJSONArray("modules");
+                for (int i = 0; i < array.length(); i++) {
+                    JSONObject m = array.getJSONObject(i);
+                    List<String> files = patchFiles(m.optJSONArray("files"));
+                    for (String file : files) {
+                        if (!owned.add(file)) throw new IOException(file + " belongs to more than one module");
+                    }
+                    Module module = new Module(m.getString("id"), m.getString("name"), m.getString("version"), strings(m.optJSONArray("notes")), files);
+                    if (modules.put(module.id(), module) != null)
+                        throw new IOException("Duplicate module id " + module.id());
+                }
+                return new PackInfo(root.getString("gameVersion"), modules, patchFiles(root.optJSONArray("obsolete")));
+            } catch (JSONException e) {
+                throw new IOException("Malformed " + PACK_INFO, e);
+            }
+        }
+
+        Set<String> files() {
+            Set<String> files = new LinkedHashSet<>();
+            this.modules.values().forEach(module -> files.addAll(module.files()));
+            return files;
+        }
+    }
+
     private static final class Notice {
         private final Type type;
         private final String title;
