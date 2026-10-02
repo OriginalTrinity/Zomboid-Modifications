@@ -19,6 +19,7 @@ import zombie.iso.IsoCell;
 import zombie.iso.IsoChunk;
 import zombie.iso.IsoDirections;
 import zombie.iso.IsoGridSquare;
+import zombie.iso.IsoObject;
 import zombie.iso.IsoUtils;
 import zombie.iso.IsoWorld;
 import zombie.iso.SpriteDetails.IsoFlagType;
@@ -28,6 +29,14 @@ import zombie.iso.sprite.shapers.FloorShaperDiamond;
 import zombie.iso.weather.ClimateManager;
 
 public final class FBORenderSnow {
+    public static final int SNOW_FULL = 16;
+    private static final int SIDE_N = 1;
+    private static final int SIDE_S = 2;
+    private static final int SIDE_W = 4;
+    private static final int SIDE_E = 8;
+    // A transition edge's snow is solid this far from the side it comes from, and gone this far, in squares
+    private static final float TRANSITION_SOLID = 0.1f;
+    private static final float TRANSITION_END = 0.5f;
     private static final IsoDirections[] DIRECTIONS = IsoDirections.values();
     private static FBORenderSnow instance;
     private static final int NoiseGridSize = 256;
@@ -257,6 +266,94 @@ public final class FBORenderSnow {
         } else {
             return false;
         }
+    }
+
+    /** SNOW_FULL, 0 without snow, or the SIDE_ flags of the sides a transition edge's snow comes from */
+    public int getSnowSides(int x, int y, int z) {
+        if (IsoWorld.instance.getCell().getSnowTarget() <= 0) {
+            return 0;
+        }
+
+        IsoGridSquare square = IsoWorld.instance.getCell().getGridSquare(x, y, z);
+        if (square == null || square.getChunk() == null || !square.getProperties().has(IsoFlagType.solidfloor)) {
+            return 0;
+        }
+
+        if (square.getProperties().has(IsoFlagType.water) || square.getWater() != null && square.getWater().isValid()) {
+            return 0;
+        }
+
+        // Snow sprites are snowy all over, not just where the overlay covers them
+        IsoObject floor = square.getFloor();
+        if (floor != null && floor.isUseSnowSprite()) {
+            return SNOW_FULL;
+        }
+
+        // Chunks are reused as the map streams in, and a chunk's grid is only rebuilt when it's drawn: until then it
+        // can belong to the chunk's old spot. Upper floors share one grid, which is for the floor drawn last
+        IsoChunk chunk = square.getChunk();
+        FBORenderSnow.SnowGrid snowGrid = this.getChunkSnowGrid(IsoPlayer.getPlayerIndex(), chunk, z);
+        if (snowGrid == null || snowGrid.worldX != chunk.wx * 8 - 1 || snowGrid.worldY != chunk.wy * 8 - 1 || snowGrid.level != z) {
+            return 0;
+        }
+
+        int snowX = snowGrid.worldToSelfX(x);
+        int snowY = snowGrid.worldToSelfY(y);
+        boolean holdsSnow = canHoldSnow(square);
+        if (holdsSnow && snowGrid.check(snowX, snowY)) {
+            return SNOW_FULL;
+        }
+
+        if (snowGrid.grid[snowX][snowY][0] == null) {
+            return 0;
+        }
+
+        // The same sides SnowGrid.init picks the transition tile from
+        int sides = 0;
+        if (snowGrid.check(snowX, snowY - 1) && (holdsSnow || isOpenTo(square, IsoDirections.N))) {
+            sides |= SIDE_N;
+        }
+
+        if (snowGrid.check(snowX, snowY + 1) && (holdsSnow || isOpenTo(square, IsoDirections.S))) {
+            sides |= SIDE_S;
+        }
+
+        if (snowGrid.check(snowX - 1, snowY) && (holdsSnow || isOpenTo(square, IsoDirections.W))) {
+            sides |= SIDE_W;
+        }
+
+        if (snowGrid.check(snowX + 1, snowY) && (holdsSnow || isOpenTo(square, IsoDirections.E))) {
+            sides |= SIDE_E;
+        }
+
+        return sides;
+    }
+
+    /** How much snow covers the point (fx, fy) of a square, 0..1 within it, given its getSnowSides */
+    public static float getCoverage(int sides, float fx, float fy) {
+        if (sides == SNOW_FULL) {
+            return 1.0f;
+        }
+
+        float distance = 1.0f;
+        if ((sides & SIDE_N) != 0) {
+            distance = Math.min(distance, fy);
+        }
+
+        if ((sides & SIDE_S) != 0) {
+            distance = Math.min(distance, 1.0f - fy);
+        }
+
+        if ((sides & SIDE_W) != 0) {
+            distance = Math.min(distance, fx);
+        }
+
+        if ((sides & SIDE_E) != 0) {
+            distance = Math.min(distance, 1.0f - fx);
+        }
+
+        float t = PZMath.clamp((distance - TRANSITION_SOLID) / (TRANSITION_END - TRANSITION_SOLID), 0.0f, 1.0f);
+        return 1.0f - t * t * (3.0f - 2.0f * t);
     }
 
     public void RenderSnow(IsoChunk chunk, int zza) {

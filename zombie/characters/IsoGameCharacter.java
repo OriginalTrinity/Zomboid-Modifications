@@ -236,27 +236,7 @@ import zombie.inventory.types.Literature;
 import zombie.inventory.types.MapItem;
 import zombie.inventory.types.Radio;
 import zombie.inventory.types.WeaponType;
-import zombie.iso.BentFences;
-import zombie.iso.BuildingDef;
-import zombie.iso.IsoCamera;
-import zombie.iso.IsoCell;
-import zombie.iso.IsoChunk;
-import zombie.iso.IsoDirections;
-import zombie.iso.IsoGridSquare;
-import zombie.iso.IsoLightSource;
-import zombie.iso.IsoMovingObject;
-import zombie.iso.IsoObject;
-import zombie.iso.IsoObjectPicker;
-import zombie.iso.IsoPuddles;
-import zombie.iso.IsoRoofFixer;
-import zombie.iso.IsoUtils;
-import zombie.iso.IsoWorld;
-import zombie.iso.LightingJNI;
-import zombie.iso.LosUtil;
-import zombie.iso.RoomDef;
-import zombie.iso.Vector2;
-import zombie.iso.Vector2ObjectPool;
-import zombie.iso.Vector3;
+import zombie.iso.*;
 import zombie.iso.SpriteDetails.IsoFlagType;
 import zombie.iso.SpriteDetails.IsoObjectType;
 import zombie.iso.areas.IsoBuilding;
@@ -754,6 +734,7 @@ public abstract class IsoGameCharacter
     private final Map<CharacterDiedListener, Boolean> onDiedListeners = new LinkedHashMap<>();
     private IsoDeadBody diedBody;
     private boolean nearWallCrouching;
+    private final SnowTracks.FootState snowTrackFeet = new SnowTracks.FootState();
     private final IsoGameCharacter.Recoil recoil = new IsoGameCharacter.Recoil();
     private static final double meleeWeaponMuscleStrainAdjustment = 0.65;
     private boolean usePhysicHitReaction;
@@ -4873,6 +4854,7 @@ public abstract class IsoGameCharacter
 
     private void OnAnimEvent_Footstep(IsoGameCharacter owner, String type) {
         owner.DoFootstepSound(type);
+        SnowTracks.onFootstep(owner);
     }
 
     private void OnAnimEvent_DamageWhileInTrees(IsoGameCharacter owner) {
@@ -14421,6 +14403,10 @@ public abstract class IsoGameCharacter
 
     public boolean isNearWallCrouching() {
         return this.nearWallCrouching;
+    }
+
+    public SnowTracks.FootState getSnowTrackFeet() {
+        return this.snowTrackFeet;
     }
 
     public float getBeenSprintingFor() {

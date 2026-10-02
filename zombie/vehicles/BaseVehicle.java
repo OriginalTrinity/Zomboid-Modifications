@@ -111,21 +111,7 @@ import zombie.inventory.types.DrainableComboItem;
 import zombie.inventory.types.HandWeapon;
 import zombie.inventory.types.InventoryContainer;
 import zombie.inventory.types.Key;
-import zombie.iso.BuildingDef;
-import zombie.iso.IsoCamera;
-import zombie.iso.IsoCell;
-import zombie.iso.IsoChunk;
-import zombie.iso.IsoChunkMap;
-import zombie.iso.IsoDirections;
-import zombie.iso.IsoGridSquare;
-import zombie.iso.IsoLightSource;
-import zombie.iso.IsoMovingObject;
-import zombie.iso.IsoObject;
-import zombie.iso.IsoUtils;
-import zombie.iso.IsoWorld;
-import zombie.iso.Vector2;
-import zombie.iso.Vector2ObjectPool;
-import zombie.iso.Vector3;
+import zombie.iso.*;
 import zombie.iso.SpriteDetails.IsoObjectType;
 import zombie.iso.areas.SafeHouse;
 import zombie.iso.fboRenderChunk.FBORenderShadows;
@@ -308,6 +294,7 @@ public final class BaseVehicle
     public static final int MAX_WHEELS = 4;
     public static final int PHYSICS_PARAM_COUNT = 27;
     public final BaseVehicle.WheelInfo[] wheelInfo = new BaseVehicle.WheelInfo[4];
+    private final SnowTracks.WheelState snowTrackWheels = new SnowTracks.WheelState();
     public long ramSound;
     public long ramSoundTime;
     private VehicleEngineRPM vehicleEngineRpm;
@@ -3256,6 +3243,7 @@ public final class BaseVehicle
                 }
 
                 super.update();
+                SnowTracks.onVehicleUpdate(this, this.snowTrackWheels);
                 if (this.timeSinceLastAuth > 0.0F) {
                     this.timeSinceLastAuth--;
                 }

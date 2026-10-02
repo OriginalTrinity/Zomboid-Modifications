@@ -2985,6 +2985,7 @@ public final class IsoWorld {
     }
 
     public void update() {
+        SnowTracks.update();
         try (AbstractPerformanceProfileProbe var1 = IsoWorld.s_performance.isoWorldUpdate.profile()) {
             this.updateInternal();
         }

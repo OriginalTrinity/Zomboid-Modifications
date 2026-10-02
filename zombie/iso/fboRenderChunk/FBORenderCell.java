@@ -1131,6 +1131,7 @@ public final class FBORenderCell {
             }
         }
 
+        FBORenderSnowTracks.getInstance().render(playerIndex);
         this.renderOpaqueObjectsEvent(playerIndex);
         SpriteRenderer.instance.beginProfile(movingObjectsProbe);
         this.renderMovingObjects();
