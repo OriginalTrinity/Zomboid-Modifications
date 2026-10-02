@@ -205,11 +205,21 @@ public final class FBORenderSnow {
                 this.snowGridCur.frac = -1;
             }
 
-            boolean recaching = PerformanceSettings.fboRenderChunk && FBORenderChunkManager.instance.isCaching();
-            if (recaching || worldX != this.snowGridCur.worldX || worldY != this.snowGridCur.worldY ||fracTarget != this.snowGridCur.frac) {
+            // Most re-caches are for lighting; rebuild only when cover or objects changed
+            boolean coverChanged = PerformanceSettings.fboRenderChunk
+                && FBORenderChunkManager.instance.isCaching()
+                && (chunkLevel.updateCoverMask(worldX, worldY, level) || this.objectsChanged(chunk, level, playerIndex));
+            // Upper floors share one grid, so drawing a different floor rebuilds it
+            if (coverChanged || worldX != this.snowGridCur.worldX || worldY != this.snowGridCur.worldY ||fracTarget != this.snowGridCur.frac
+                || level != this.snowGridCur.level) {
                 this.snowGridCur.init(worldX, worldY, level, fracTarget);
             }
         }
+    }
+
+    private boolean objectsChanged(IsoChunk chunk, int level, int playerIndex) {
+        long objectFlags = FBORenderChunk.DIRTY_OBJECT_ADD | FBORenderChunk.DIRTY_OBJECT_REMOVE | FBORenderChunk.DIRTY_OBJECT_MODIFY;
+        return chunk.getRenderLevels(playerIndex).isDirty(level, objectFlags, Core.getInstance().getZoom(playerIndex));
     }
 
     public boolean isSnowAnywhere() {
@@ -517,9 +527,36 @@ public final class FBORenderSnow {
         public final IsoChunk chunk;
         private FBORenderSnow.SnowGrid snowGrid;
         public int adjacentChunkLoadedCounter = -1;
+        // One bit per grid square that can hold snow
+        private long coverMaskLow;
+        private long coverMaskHigh;
 
         public ChunkLevel(IsoChunk chunk) {
             this.chunk = chunk;
+        }
+
+        /** Returns true if the squares that can hold snow changed since the last call. */
+        private boolean updateCoverMask(int worldX, int worldY, int level) {
+            long low = 0L;
+            long high = 0L;
+            for (int y = 0; y < 10; y++) {
+                for (int x = 0; x < 10; x++) {
+                    IsoGridSquare square = IsoWorld.instance.currentCell.getGridSquare(worldX + x, worldY + y, level);
+                    if (square != null && FBORenderSnow.canHoldSnow(square)) {
+                        int bit = y * 10 + x;
+                        if (bit < 64) {
+                            low |= 1L << bit;
+                        } else {
+                            high |= 1L << (bit - 64);
+                        }
+                    }
+                }
+            }
+
+            boolean changed = low != this.coverMaskLow || high != this.coverMaskHigh;
+            this.coverMaskLow = low;
+            this.coverMaskHigh = high;
+            return changed;
         }
     }
 
@@ -529,6 +566,7 @@ public final class FBORenderSnow {
         public int w = 10;
         public int h = 10;
         public int frac;
+        public int level;
         public static final int N = 0;
         public static final int S = 1;
         public static final int W = 2;
@@ -559,6 +597,7 @@ public final class FBORenderSnow {
 
             this.worldX = worldX;
             this.worldY = worldY;
+            this.level = level;
             this.frac = frac;
             boolean isWinter = ClimateManager.getInstance().getSeason().isSeason(5);
             if (Core.getInstance().isForceSnow()) {
