@@ -16,6 +16,8 @@
 !/zombie/debug/debugWindows/ThermalConfigPanel.java
 !/zombie/debug/debugWindows/ThermalForecastPanel.java
 !/zombie/patchupdater/PatchUpdater.java
+!/zombie/iso/SnowTracks.java
+!/zombie/iso/fboRenderChunk/FBORenderSnowTracks.java
 
 # --- Modified vanilla files: thermal simulation ---
 !/zombie/GameWindow.java
@@ -54,8 +56,13 @@
 !zombie/network/packets/vehicle/VehiclePhysicsUnreliablePacket.java
 !zombie/network/packets/vehicle/VehiclePhysicsReliablePacket.java
 !zombie/vehicles/VehicleInterpolation.java
+!zombie/network/packets/connection/LoginPacket.java
 
 # --- Modified vanilla files: Binoculars
 !zombie/characters/IsoPlayer.java
 !zombie/iso/PlayerCamera.java
 !zombie/iso/LightingJNI.java
+
+# --- Modified vanilla files: Snow Tracks
+!zombie/iso/fboRenderChunk/FBORenderCell.java
+!zombie/vehicles/BaseVehicle.java
