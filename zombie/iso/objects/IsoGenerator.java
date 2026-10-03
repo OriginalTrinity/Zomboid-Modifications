@@ -7,6 +7,7 @@ import java.text.DecimalFormat;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import zombie.GameTime;
 import zombie.SandboxOptions;
 import zombie.UsedFromLua;
@@ -88,6 +89,9 @@ public class IsoGenerator extends IsoObject {
     private static HashMap<String, String> generatorSpriteToType;
     private static final DecimalFormat decimalFormat = new DecimalFormat("#.#### L/h");
     private static final DecimalFormat decimalFormatB = new DecimalFormat(" (#.#### L/h)");
+    private static final float CLIMATE_LOAD_SYNC_EPSILON = 0.01F;
+    private float climateLoad; // part of totalPowerUsing that comes from RV climate control, set by RoomTemperatureManager
+    private float syncedClimateLoad; // server only: climate load clients last received
 
     public IsoGenerator(IsoCell cell) {
         super(cell);
@@ -275,6 +279,8 @@ public class IsoGenerator extends IsoObject {
     public void setSurroundingElectricity() {
         this.itemsPowered.clear();
         this.totalPowerUsing = 0.02F;
+        float climateLoad = this.climateLoad; // re-applied below, RoomTemperatureManager only sets it once per recalculation
+        this.climateLoad = 0.0F;
         if (this.square != null && this.square.chunk != null) {
             boolean allowExteriorGenerator = SandboxOptions.getInstance().allowExteriorGenerator.getValue();
             int chunkX = this.square.chunk.wx;
@@ -330,6 +336,8 @@ public class IsoGenerator extends IsoObject {
 
             objects.clear();
         }
+
+        this.setClimateLoad(climateLoad);
     }
 
     private void addPoweredItem(IsoObject obj, float powerConsumption) {
@@ -433,6 +441,13 @@ public class IsoGenerator extends IsoObject {
             this.totalPowerUsing = ((Double)this.getModData().rawget("totalPowerDraw")).floatValue();
         }
 
+        // Restored right away so the fuel charged for hours spent unloaded includes it, and clients show it with the chunk
+        if (this.getModData().rawget("climateControlDraw") instanceof Double climateControlDraw) {
+            this.climateLoad = climateControlDraw.floatValue();
+            this.syncedClimateLoad = this.climateLoad;
+            this.totalPowerUsing += this.climateLoad;
+        }
+
         this.connected = input.get() != 0;
         this.activated = input.get() != 0;
         this.fuel = Math.min(input.getFloat(), 10.0F);
@@ -443,7 +458,8 @@ public class IsoGenerator extends IsoObject {
 
     @Override
     public void save(ByteBuffer output, boolean isDebugSave) throws IOException {
-        this.getModData().rawset("totalPowerDraw", (double)this.totalPowerUsing);
+        this.getModData().rawset("totalPowerDraw", (double)(this.totalPowerUsing - this.climateLoad));
+        this.getModData().rawset("climateControlDraw", (double)this.climateLoad);
         super.save(output, isDebugSave);
         output.put((byte)(this.isConnected() ? 1 : 0));
         output.put((byte)(this.isActivated() ? 1 : 0));
@@ -603,6 +619,7 @@ public class IsoGenerator extends IsoObject {
         b.putInt(this.condition);
         b.putBoolean(this.activated);
         b.putBoolean(this.connected);
+        b.putFloat(this.climateLoad);
     }
 
     @Override
@@ -611,6 +628,7 @@ public class IsoGenerator extends IsoObject {
         int condition = bb.getInt();
         boolean activated = bb.getBoolean();
         boolean connected = bb.getBoolean();
+        float climateLoad = bb.getFloat(); // only the server's value counts
         this.fuel = fuel;
         this.condition = condition;
         this.connected = connected;
@@ -633,6 +651,10 @@ public class IsoGenerator extends IsoObject {
             }
 
             this.setSurroundingElectricity();
+        }
+
+        if (GameClient.client) {
+            this.setClimateLoad(climateLoad);
         }
     }
 
@@ -776,5 +798,48 @@ public class IsoGenerator extends IsoObject {
 
     private void explode(IsoGridSquare isoGridSquare) {
         IsoFireManager.explode(isoGridSquare.getCell(), isoGridSquare, 100000);
+    }
+
+    /** Range and level check only, doesn't look at whether the generator is running. */
+    public boolean isInRange(IsoGridSquare sq) {
+        return sq.getZ() >= this.getMinAffectedLevel()
+                && sq.getZ() <= this.getMaxAffectedLevel()
+                && IsoUtils.DistanceToSquared(sq.getX() + 0.5f, sq.getY() + 0.5f, this.getSquare().getX() + 0.5f, this.getSquare().getY() + 0.5f) <= generatorRadius * generatorRadius;
+    }
+
+    public static IsoGenerator findActiveInRange(IsoGridSquare sq) {
+        for (IsoGenerator generator : AllGenerators) {
+            if (generator.isActivated() && generator.getSquare() != null && generator.isInRange(sq)) return generator;
+        }
+        return null;
+    }
+
+    /** Sets every generator's climate load, generators missing from {@code loads} get none. */
+    public static void setClimateLoads(Map<IsoGenerator, Float> loads) {
+        for (IsoGenerator generator : AllGenerators) {
+            generator.setClimateLoad(loads.getOrDefault(generator, 0.0F));
+        }
+    }
+
+    /** Fuel per hour (before the sandbox multiplier) that RV climate control draws from this generator. */
+    public void setClimateLoad(float load) {
+        if (!this.isActivated()) load = 0.0F;
+        if (load != this.climateLoad) {
+            this.totalPowerUsing += load - this.climateLoad;
+            this.climateLoad = load;
+            String label = Translator.getTextOrNull("IGUI_Generator_ClimateControl");
+            if (label == null) label = "Climate Control";
+            if (load > 0.0F) {
+                this.itemsPowered.put(label, decimalFormatB.format(load * SandboxOptions.instance.generatorFuelConsumption.getValue()));
+            } else {
+                this.itemsPowered.remove(label);
+            }
+        }
+
+        if (GameServer.server && this.getObjectIndex() != -1
+                && (Math.abs(load - this.syncedClimateLoad) >= CLIMATE_LOAD_SYNC_EPSILON || (load == 0.0F) != (this.syncedClimateLoad == 0.0F))) {
+            this.syncedClimateLoad = load;
+            this.sync();
+        }
     }
 }
