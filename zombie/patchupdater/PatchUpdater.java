@@ -37,7 +37,7 @@ import java.util.zip.ZipInputStream;
 
 /**
  * Keeps the Java patch pack up to date: downloads the pack from Google Drive in the background and installs it when
- * the game exits
+ * the game exits. A pack holds class files and files under media/ (shaders, textures), all relative to the game folder.
  */
 public class PatchUpdater {
 
@@ -96,6 +96,10 @@ public class PatchUpdater {
 
     private static Path stagedDir() {
         return workDir().resolve("staged");
+    }
+
+    private static Path originalsDir() {
+        return workDir().resolve("originals");
     }
 
     private static Path appliedMarker() {
@@ -220,8 +224,9 @@ public class PatchUpdater {
     }
 
     private static boolean isPatchFile(String path) {
-        return path.endsWith(".class") && path.indexOf('/') > 0
-                && !path.startsWith("/") && !path.contains("..") && !path.contains(":");
+        if (path.startsWith("/") || path.contains("..") || path.contains(":") || path.contains("//")) return false;
+        if (path.startsWith("media/")) return path.length() > "media/".length() && !path.endsWith("/");
+        return path.endsWith(".class") && path.indexOf('/') > 0;
     }
 
     private static String normalize(String path) {
@@ -293,6 +298,9 @@ public class PatchUpdater {
      * Shutdown hook: removes files the old pack owned (or either pack declares obsolete) that the new pack doesn't
      * contain, copies the new files in and replaces the pack info. Everything it overwrites or deletes is backed up
      * first and restored on failure.
+     * <p>
+     * A game file the pack overwrites for the first time (e.g. a vanilla shader) is kept in originals/ and put back
+     * once no pack contains it anymore, instead of being deleted. Classes don't need this - they fall back to the jar.
      */
     private static void install() {
         Path staged = stagedDir();
@@ -300,10 +308,12 @@ public class PatchUpdater {
         if (!Files.isDirectory(stagedFiles)) return;
         Path gameDir = gameDir();
         Path backup = workDir().resolve("backup");
+        Path originals = originalsDir();
 
         List<String> touched;
         Set<String> hadOriginal;
         List<String> newFiles, removed;
+        List<String> savedOriginals = new ArrayList<>();
 
         try {
             PackInfo next = PackInfo.parse(Files.readString(staged.resolve(PACK_INFO)));
@@ -324,16 +334,31 @@ public class PatchUpdater {
             touched.add(PACK_INFO);
             deleteRecursively(backup);
             hadOriginal = backUp(gameDir, backup, touched);
+
+            Set<String> previousFiles = previous != null ? previous.files() : Set.of();
+            for (String file : newFiles) {
+                Path target = gameDir.resolve(file), original = originals.resolve(file);
+                if (previousFiles.contains(file) || !Files.exists(target) || Files.exists(original)) continue;
+                Files.createDirectories(original.getParent());
+                Files.copy(target, original);
+                savedOriginals.add(file);
+            }
         } catch (IOException e) {
             System.err.println(PACK_NAME + ": update not installed, nothing was changed: " + e);
+            discardOriginals(originals, savedOriginals);
             return;
         }
 
         try {
             for (String file : removed) {
-                Path target = gameDir.resolve(file);
-                Files.deleteIfExists(target);
-                deleteEmptyParents(gameDir, target.getParent());
+                Path target = gameDir.resolve(file), original = originals.resolve(file);
+                if (Files.exists(original)) {
+                    Files.createDirectories(target.getParent());
+                    Files.copy(original, target, StandardCopyOption.REPLACE_EXISTING);
+                } else {
+                    Files.deleteIfExists(target);
+                    deleteEmptyParents(gameDir, target.getParent());
+                }
             }
             for (String file : newFiles) {
                 Path target = gameDir.resolve(file);
@@ -344,9 +369,11 @@ public class PatchUpdater {
         } catch (IOException e) {
             System.err.println(PACK_NAME + ": installing the update failed, rolling back: " + e);
             restore(gameDir, backup, touched, hadOriginal);
+            discardOriginals(originals, savedOriginals);
             return;
         }
 
+        discardOriginals(originals, removed); // restored above
         try {
             Files.move(staged.resolve(CHANGES), appliedMarker(), StandardCopyOption.REPLACE_EXISTING);
             deleteRecursively(staged);
@@ -381,6 +408,17 @@ public class PatchUpdater {
                 }
             } catch (IOException e) {
                 System.err.println(PACK_NAME + ": rollback failed for " + file + ": " + e);
+            }
+        }
+    }
+
+    private static void discardOriginals(Path originals, List<String> files) {
+        for (String file : files) {
+            try {
+                Path original = originals.resolve(file);
+                if (Files.deleteIfExists(original)) deleteEmptyParents(originals, original.getParent());
+            } catch (IOException e) {
+                System.err.println(PACK_NAME + ": couldn't remove the saved original of " + file + ": " + e);
             }
         }
     }
