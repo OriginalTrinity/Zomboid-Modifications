@@ -131,16 +131,21 @@ public class IsoThermalRoom {
         return REGION_ID_FLAG | packCoordinates(x, y, z);
     }
 
+    // 20 bits each for x and y, 7 for the level offset by 64 (-64 to 63, B42 has -32 to 31).
     public static long packCoordinates(int x, int y, int z) {
-        return ((long) (x & 0xFFFFF) << 24) | ((long) (y & 0xFFFFF) << 4) | (long) (z & 0xF);
+        return ((long) (x & 0xFFFFF) << 27) | ((long) (y & 0xFFFFF) << 7) | (long) (z + 64 & 0x7F);
     }
 
     public static int unpackX(long packed) {
-        return (int) ((packed >> 24) & 0xFFFFF);
+        return (int) ((packed >> 27) & 0xFFFFF);
     }
 
     public static int unpackY(long packed) {
-        return (int) ((packed >> 4) & 0xFFFFF);
+        return (int) ((packed >> 7) & 0xFFFFF);
+    }
+
+    public static int unpackZ(long packed) {
+        return (int) (packed & 0x7F) - 64;
     }
 
     public boolean occupiesChunk(int wx, int wy) {
