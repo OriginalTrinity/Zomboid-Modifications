@@ -655,6 +655,7 @@ import zombie.iso.weather.ClimateManager;
 import zombie.iso.weather.ClimateMoon;
 import zombie.iso.weather.ClimateValues;
 import zombie.iso.weather.Temperature;
+import zombie.iso.weather.Thermostat;
 import zombie.iso.weather.ThunderStorm;
 import zombie.iso.weather.WeatherPeriod;
 import zombie.iso.weather.WorldFlares;
@@ -2702,6 +2703,7 @@ public final class LuaManager {
             this.setExposed(DigType.class);
             this.setExposed(WorldMapVisitedServer.class);
             this.setExposed(TradingState.class);
+            this.setExposed(Thermostat.class);
 
             for (Class<?> clazz : this.exposed) {
                 this.exposeLikeJavaRecursively(clazz, LuaManager.env);
