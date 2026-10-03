@@ -1,5 +1,6 @@
 package zombie.iso.weather;
 
+import gnu.trove.map.hash.TLongObjectHashMap;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.commons.lang3.tuple.Triple;
 import org.jetbrains.annotations.Nullable;
@@ -50,16 +51,15 @@ public class RoomTemperatureManager {
     private static RoomTemperatureManager instance;
     private volatile int regionGeneration;
 
-    private final ArrayList<IsoThermalRoom> simulatedRooms;
-    private final ArrayList<PersistentThermalData> staleRooms;
-    private final ArrayList<RoomChunkLink> roomChunkLinks;
+    private final TLongObjectHashMap<IsoThermalRoom> simulatedRooms;
+    private final TLongObjectHashMap<PersistentThermalData> staleRooms;
+    private final TLongObjectHashMap<RoomChunkLink> roomChunkLinks;
     private final ArrayDeque<Triple<Double, Float, Float>> outdoorHistory;
 
     private final Queue<ChunkLifecycleEvent> pendingChunkEvents;
     private final HashMap<IsoPlayer, HashMap<Long, Float>> playerSyncedTemps;
     private final HashMap<Long, Long> pendingRoomRequests;
     private final Set<IsoThermalRoom> pendingRescanRooms;
-    private final Queue<IsoGridSquare> pendingSquareChanges;
     private final Set<Long> rescanInProgress;
     private final RoomTileScanWorker tileScanWorker;
     private final Set<Long> pendingPlayerRoomChunks;
@@ -76,15 +76,14 @@ public class RoomTemperatureManager {
     private boolean remotePersistenceDataReceived;
 
     public RoomTemperatureManager() {
-        this.simulatedRooms = new ArrayList<>();
-        this.staleRooms = new ArrayList<>();
-        this.roomChunkLinks = new ArrayList<>();
+        this.simulatedRooms = new TLongObjectHashMap<>();
+        this.staleRooms = new TLongObjectHashMap<>();
+        this.roomChunkLinks = new TLongObjectHashMap<>();
         this.outdoorHistory = new ArrayDeque<>();
         this.pendingChunkEvents = new ConcurrentLinkedQueue<>();
         this.playerSyncedTemps = new HashMap<>();
         this.pendingRoomRequests = new HashMap<>();
         this.pendingRescanRooms = ConcurrentHashMap.newKeySet();
-        this.pendingSquareChanges = new ConcurrentLinkedQueue<>();
         this.rescanInProgress = ConcurrentHashMap.newKeySet();
         this.pendingPlayerRoomChunks = new HashSet<>();
         this.unloadedTemperatureCache = new HashMap<>();
@@ -111,7 +110,7 @@ public class RoomTemperatureManager {
 
         double now = GameTime.getInstance().getWorldAgeHours();
         if (now - this.lastApplyWorldHours >= ThermalConfig.TEMP_APPLY_INTERVAL_HOURS) {
-            this.simulatedRooms.forEach(IsoThermalRoom::applyTemperatureChange);
+            this.simulatedRooms.valueCollection().forEach(IsoThermalRoom::applyTemperatureChange);
             if (GameServer.server) {
                 this.syncRoomTemperaturesToClients();
             }
@@ -121,10 +120,6 @@ public class RoomTemperatureManager {
         if (now - this.lastCalculateWorldHours >= ThermalConfig.TEMP_CALCULATE_INTERVAL_HOURS) {
             this.retryPendingPlayerRoomChunks();
             this.restoreMissingPlayerRooms();
-            IsoGridSquare changed;
-            while ((changed = this.pendingSquareChanges.poll()) != null) {
-                this.processSquareChanged(changed);
-            }
             if (!this.pendingRescanRooms.isEmpty()) {
                 Set<IsoThermalRoom> toRescan = new HashSet<>(this.pendingRescanRooms);
                 this.pendingRescanRooms.removeAll(toRescan);
@@ -147,7 +142,7 @@ public class RoomTemperatureManager {
 
             this.recordOutdoorTempSample();
             this.groundTemperature = ThermalConfig.GROUND_TEMPERATURE + ThermalConfig.GROUND_OUTDOOR_FACTOR * (this.averageOutdoorHistory()[0] - ThermalConfig.GROUND_TEMPERATURE);
-            this.simulatedRooms.forEach(IsoThermalRoom::calculateTargetTemperature);
+            this.simulatedRooms.valueCollection().forEach(IsoThermalRoom::calculateTargetTemperature);
             this.lastCalculateWorldHours = now;
         }
 
@@ -184,6 +179,11 @@ public class RoomTemperatureManager {
 
         for (IsoGridSquare sq : affected) {
             if (sq == null) continue;
+            IsoRoom mapped = getMappedRoom(sq);
+            if (mapped != null) {
+                this.getSimulatedRoomById(mapped.getRoomDef().getID()).ifPresent(this.pendingRescanRooms::add);
+                continue;
+            }
             Optional<IsoThermalRoom> existing = this.playerRoomAt(sq);
             if (existing.isPresent()) {
                 if (this.isRegionStale(existing.get())) this.evictStaleRoom(existing.get(), "region stale after structure change: " + this.describeRoomRegion(existing.get()));
@@ -206,12 +206,10 @@ public class RoomTemperatureManager {
     private void processChunkLoaded(int wx, int wy) {
         for (RoomDef def : this.getRoomsTouchedByChunk(wx, wy)) {
             if (def.isUserDefined()) continue; // generated from player-built regions, handled by discoverPlayerRoomsInChunk
-            RoomChunkLink roomChunkLink;
-            Optional<RoomChunkLink> optional = this.roomChunkLinks.stream().filter(rcl -> rcl.getRoomId() == def.getID()).findFirst();
-            if (optional.isPresent()) roomChunkLink = optional.get();
-            else {
-                roomChunkLink = new RoomChunkLink(def.getID(), this.countChunksForRoom(def));
-                roomChunkLinks.add(roomChunkLink);
+            RoomChunkLink roomChunkLink = this.roomChunkLinks.get(def.getID());
+            if (roomChunkLink == null) {
+                roomChunkLink = new RoomChunkLink(this.countChunksForRoom(def));
+                this.roomChunkLinks.put(def.getID(), roomChunkLink);
             }
             roomChunkLink.incrementLoadedChunks();
 
@@ -225,23 +223,21 @@ public class RoomTemperatureManager {
 
     private void processChunkUnloaded(int wx, int wy) {
         for (RoomDef def : this.getRoomsTouchedByChunk(wx, wy)) {
-            RoomChunkLink roomChunkLink;
-            Optional<RoomChunkLink> optional = this.roomChunkLinks.stream().filter(rcl -> rcl.getRoomId() == def.getID()).findFirst();
-            if (optional.isEmpty()) continue;
-            roomChunkLink = optional.get();
+            RoomChunkLink roomChunkLink = this.roomChunkLinks.get(def.getID());
+            if (roomChunkLink == null) continue;
 
             if (roomChunkLink.getLoadedChunks() == roomChunkLink.getTotalChunks()) {
                 this.getSimulatedRoomById(def.getID()).ifPresent(room -> this.evictSimulatedRoom(room, "chunk " + wx + "," + wy + " unloaded"));
             }
             roomChunkLink.decrementLoadedChunks();
             if (roomChunkLink.loadedChunks < 1) {
-                roomChunkLinks.remove(roomChunkLink);
+                this.roomChunkLinks.remove(def.getID());
             }
         }
 
         this.pendingPlayerRoomChunks.remove(chunkHash(wx, wy));
         ArrayList<IsoThermalRoom> toEvict = new ArrayList<>();
-        for (IsoThermalRoom room : this.simulatedRooms) {
+        for (IsoThermalRoom room : this.simulatedRooms.valueCollection()) {
             if (room.isPlayerRoom() && room.occupiesChunk(wx, wy)) toEvict.add(room);
         }
         toEvict.forEach(room -> this.evictSimulatedRoom(room, "chunk " + wx + "," + wy + " unloaded"));
@@ -325,23 +321,6 @@ public class RoomTemperatureManager {
         return ((long) wx << 32) | (wy & 0xFFFFFFFFL);
     }
 
-    public void onSquareChanged(IsoGridSquare square) {
-        this.pendingSquareChanges.add(square);
-    }
-
-    private void processSquareChanged(IsoGridSquare square) {
-        if (square == null) return;
-        this.enqueueRescanIfSimulated(square);
-        this.enqueueRescanIfSimulated(IsoThermalRoom.getAdjacentSquare(square, 0, -1));
-        this.enqueueRescanIfSimulated(IsoThermalRoom.getAdjacentSquare(square, 0, 1));
-        this.enqueueRescanIfSimulated(IsoThermalRoom.getAdjacentSquare(square, -1, 0));
-        this.enqueueRescanIfSimulated(IsoThermalRoom.getAdjacentSquare(square, 1, 0));
-    }
-
-    private void enqueueRescanIfSimulated(IsoGridSquare square) {
-        this.getSimulatedRoom(square).ifPresent(this.pendingRescanRooms::add);
-    }
-
     private boolean isRegionStale(IsoThermalRoom room) {
         if (!room.isPlayerRoom() || room.getSquares().isEmpty()) return false;
         IsoWorldRegion current = getRegionOfSquare(room.getSquares().get(0));
@@ -358,8 +337,8 @@ public class RoomTemperatureManager {
         if (existing.isPresent()) return existing.get();
         IsoThermalRoom room = new IsoThermalRoom(region, seed);
         // A room already covering part of this region (e.g. regions merged) absorbs it through a rescan instead
-        Optional<IsoThermalRoom> overlapping = this.simulatedRooms.stream()
-                .filter(r -> r.isPlayerRoom() && room.getSquares().stream().anyMatch(r::containsSquare))
+        Optional<IsoThermalRoom> overlapping = this.simulatedRooms.valueCollection().stream()
+                .filter(other -> other.isPlayerRoom() && room.getSquares().stream().anyMatch(other::containsSquare))
                 .findFirst();
         if (overlapping.isPresent()) {
             this.pendingRescanRooms.add(overlapping.get());
@@ -382,9 +361,9 @@ public class RoomTemperatureManager {
             room.setCurrentTemperature(ptd.lastTemp());
             room.setLastUpdate(ptd.lastUpdate());
             this.catchUpStaleRoom(room);
-            this.staleRooms.remove(ptd);
+            this.staleRooms.remove(ptd.key());
         }
-        this.simulatedRooms.add(room);
+        this.simulatedRooms.put(room.getId(), room);
         return room;
     }
 
@@ -450,11 +429,11 @@ public class RoomTemperatureManager {
     }
 
     private void evictSimulatedRoom(IsoThermalRoom room, String reason) {
-        if (!this.simulatedRooms.remove(room)) return;
+        if (this.simulatedRooms.get(room.getId()) != room) return;
+        this.simulatedRooms.remove(room.getId());
         this.notifyRoomRemoved(room.getId());
         PersistentThermalData ptd = PersistentThermalData.of(room);
-        this.staleRooms.remove(ptd);
-        this.staleRooms.add(ptd);
+        this.staleRooms.put(ptd.key(), ptd);
         if (room.isPlayerRoom()) {
             DebugType.General.println("RoomTemperature: dropped player room %d at %d,%d,%d (%d squares): %s",
                     room.getId(), room.getX(), room.getY(), room.getZ(), room.getSquares().size(), reason);
@@ -499,7 +478,7 @@ public class RoomTemperatureManager {
     private void restoreMissingPlayerRooms() {
         IsoCell cell = IsoWorld.instance.getCell();
         if (cell == null) return;
-        for (PersistentThermalData ptd : new ArrayList<>(this.staleRooms)) {
+        for (PersistentThermalData ptd : new ArrayList<>(this.staleRooms.valueCollection())) {
             if (!ptd.isPlayerRoom()) continue;
             if (cell.getChunkForGridSquare(ptd.x(), ptd.y(), 0) == null) {
                 this.restoreBackoff.remove(ptd); // not loaded, chunk loading handles it
@@ -523,7 +502,7 @@ public class RoomTemperatureManager {
                 }
             }
 
-            if (!this.staleRooms.contains(ptd)) {
+            if (!this.staleRooms.containsKey(ptd.key())) {
                 DebugType.General.println("RoomTemperature: restored player room at %d,%d,%d from saved data", ptd.x(), ptd.y(), ptd.z());
                 this.restoreBackoff.remove(ptd);
             } else {
@@ -535,16 +514,16 @@ public class RoomTemperatureManager {
         }
     }
 
-    public List<IsoThermalRoom> getSimulatedRooms() {
-        return Collections.unmodifiableList(this.simulatedRooms);
+    public Collection<IsoThermalRoom> getSimulatedRooms() {
+        return Collections.unmodifiableCollection(this.simulatedRooms.valueCollection());
     }
 
     public List<PersistentThermalData> getPersistentThermalData() {
-        return Collections.unmodifiableList(this.staleRooms);
+        return new ArrayList<>(this.staleRooms.valueCollection());
     }
 
     public Optional<IsoThermalRoom> getSimulatedRoomById(long id) {
-        return this.simulatedRooms.stream().filter(room -> room.getId() == id).findFirst();
+        return Optional.ofNullable(this.simulatedRooms.get(id));
     }
 
     public float getSimulatedTemperature(IsoRoom room) {
@@ -560,9 +539,7 @@ public class RoomTemperatureManager {
     }
 
     private Optional<PersistentThermalData> getPersistentThermalDataFromCoordinates(int x, int y, int z, boolean isPlayerRoom) {
-        Optional<PersistentThermalData> optional = this.staleRooms.stream()
-                .filter(ptd -> ptd.x() == x && ptd.y() == y && ptd.z() == z && ptd.isPlayerRoom() == isPlayerRoom)
-                .findFirst();
+        Optional<PersistentThermalData> optional = Optional.ofNullable(this.staleRooms.get(PersistentThermalData.key(x, y, z, isPlayerRoom)));
         if (optional.isEmpty() && isPlayerRoom) {
             optional = this.findNearestPersistentThermalData(x, y, z);
         }
@@ -572,7 +549,7 @@ public class RoomTemperatureManager {
     private Optional<PersistentThermalData> findNearestPersistentThermalData(int x, int y, int z) {
         PersistentThermalData best = null;
         double bestDistSq = Double.MAX_VALUE;
-        for (PersistentThermalData ptd : this.staleRooms) {
+        for (PersistentThermalData ptd : this.staleRooms.valueCollection()) {
             if (!ptd.isPlayerRoom || ptd.z() != z) continue;
             double dx = ptd.x() - x;
             double dy = ptd.y() - y;
@@ -612,7 +589,7 @@ public class RoomTemperatureManager {
 
         double maxDistSq = ThermalConfig.ROOM_SYNC_RELEVANCE_RADIUS * ThermalConfig.ROOM_SYNC_RELEVANCE_RADIUS;
 
-        for (IsoThermalRoom room : this.simulatedRooms) {
+        for (IsoThermalRoom room : this.simulatedRooms.valueCollection()) {
             double dx = room.getX() - px;
             double dy = room.getY() - py;
             if (dx * dx + dy * dy <= maxDistSq) relevant.add(room);
@@ -622,7 +599,7 @@ public class RoomTemperatureManager {
 
     private Optional<IsoThermalRoom> playerRoomAt(IsoGridSquare sq) {
         if (sq == null) return Optional.empty();
-        return this.simulatedRooms.stream().filter(r -> r.isPlayerRoom() && r.containsSquare(sq)).findFirst();
+        return this.simulatedRooms.valueCollection().stream().filter(r -> r.isPlayerRoom() && r.containsSquare(sq)).findFirst();
     }
 
     private static RoomThermalSnapshotPacket.RoomThermalStateSnapshot snapshotOf(IsoThermalRoom room) {
@@ -677,7 +654,7 @@ public class RoomTemperatureManager {
             existing.get().setCurrentTemperature(currentTemp);
             existing.get().setSquareHashes(squareHashes);
         } else {
-            this.simulatedRooms.add(new IsoThermalRoom(id, x, y, z, isPlayerRoom, currentTemp, squareHashes));
+            this.simulatedRooms.put(id, new IsoThermalRoom(id, x, y, z, isPlayerRoom, currentTemp, squareHashes));
         }
         this.pendingRoomRequests.remove(id);
     }
@@ -689,8 +666,10 @@ public class RoomTemperatureManager {
     }
 
     public void applyRemovalFromServer(List<Long> ids) {
-        this.simulatedRooms.removeIf(room -> ids.contains(room.getId()));
-        ids.forEach(this.pendingRoomRequests::remove);
+        for (long id : ids) {
+            this.simulatedRooms.remove(id);
+            this.pendingRoomRequests.remove(id);
+        }
     }
 
     private void requestRoomSnapshot(long id) {
@@ -734,7 +713,7 @@ public class RoomTemperatureManager {
 
     public void applyPersistentThermalDataFromServer(List<PersistentThermalData> data) {
         this.staleRooms.clear();
-        this.staleRooms.addAll(data);
+        data.forEach(ptd -> this.staleRooms.put(ptd.key(), ptd));
         this.remotePersistenceDataReceived = true;
     }
 
@@ -786,8 +765,8 @@ public class RoomTemperatureManager {
 
     public void saveAll() {
         if (GameClient.client || Core.getInstance().isNoSave()) return;
-        LinkedHashSet<PersistentThermalData> snapshot = new LinkedHashSet<>(this.staleRooms);
-        for (IsoThermalRoom room : this.simulatedRooms) {
+        LinkedHashSet<PersistentThermalData> snapshot = new LinkedHashSet<>(this.staleRooms.valueCollection());
+        for (IsoThermalRoom room : this.simulatedRooms.valueCollection()) {
             PersistentThermalData ptd = PersistentThermalData.of(room);
             snapshot.remove(ptd);
             snapshot.add(ptd);
@@ -819,7 +798,7 @@ public class RoomTemperatureManager {
                 boolean isPlayerRoom = input.readBoolean();
 
                 PersistentThermalData ptd = new PersistentThermalData(x, y, z, lastTemp, lastUpdate, isPlayerRoom);
-                if (this.staleRooms.stream().noneMatch(ptd::equals)) this.staleRooms.add(ptd);
+                this.staleRooms.putIfAbsent(ptd.key(), ptd);
             }
             int historyCount = input.readInt();
             for (int i = 0; i < historyCount; i++) {
@@ -835,7 +814,8 @@ public class RoomTemperatureManager {
     }
 
     public void evaluatePersistentThermalDataCleanup() {
-        this.staleRooms.removeIf(ptd -> GameTime.getInstance().getWorldAgeHours() - ptd.lastUpdate >= ThermalConfig.PERSISTENT_THERMAL_DATA_MAX_AGE);
+        double now = GameTime.getInstance().getWorldAgeHours();
+        this.staleRooms.retainEntries((_, ptd) -> now - ptd.lastUpdate() < ThermalConfig.PERSISTENT_THERMAL_DATA_MAX_AGE);
     }
 
     public void reset() {
@@ -920,7 +900,7 @@ public class RoomTemperatureManager {
         }
 
         if (IsoRegions.getIsoWorldRegion(x, y, z) instanceof IsoWorldRegion region && region.isPlayerRoom()) {
-            for (IsoThermalRoom room : this.simulatedRooms) {
+            for (IsoThermalRoom room : this.simulatedRooms.valueCollection()) {
                 if (room.isPlayerRoom() && room.containsSquare(x, y, z)) return room.getCurrentTemperature();
             }
             int[] corner = findRegionCorner(region);
@@ -981,8 +961,16 @@ public class RoomTemperatureManager {
             return Objects.hash(this.x, this.y, this.z, this.isPlayerRoom);
         }
 
+        public long key() {
+            return key(this.x, this.y, this.z, this.isPlayerRoom);
+        }
+
         public static PersistentThermalData of(IsoThermalRoom room) {
             return new PersistentThermalData(room.getX(), room.getY(), room.getZ(), room.getCurrentTemperature(), room.getLastUpdate(), room.isPlayerRoom());
+        }
+
+        public static long key(int x, int y, int z, boolean isPlayerRoom) {
+            return (long) (x & 0xFFFFF) << 28 | (long) (y & 0xFFFFF) << 8 | (long) (z + 64 & 0x7F) << 1 | (isPlayerRoom ? 1L : 0L);
         }
 
     }
@@ -990,10 +978,8 @@ public class RoomTemperatureManager {
     private static class RoomChunkLink {
         private final int totalChunks;
         private int loadedChunks;
-        private final long roomId;
 
-        public RoomChunkLink(long roomId, int totalChunks) {
-            this.roomId = roomId;
+        public RoomChunkLink(int totalChunks) {
             this.totalChunks = totalChunks;
         }
 
@@ -1011,10 +997,6 @@ public class RoomTemperatureManager {
 
         public void decrementLoadedChunks() {
             this.loadedChunks--;
-        }
-
-        public long getRoomId() {
-            return this.roomId;
         }
     }
 
@@ -1334,7 +1316,7 @@ public class RoomTemperatureManager {
 
             MainThread.invokeOnMainThread(() -> {
                 this.rescanDone(room);
-                if (!RoomTemperatureManager.this.simulatedRooms.contains(room)) return;
+                if (RoomTemperatureManager.this.simulatedRooms.get(room.getId()) != room) return;
                 if (generation != RoomTemperatureManager.this.regionGeneration) {
                     // Regions were swapped mid-scan, so the result may mix old and new region data
                     RoomTemperatureManager.this.pendingRescanRooms.add(room);
@@ -1345,7 +1327,7 @@ public class RoomTemperatureManager {
                     RoomTemperatureManager.this.evictStaleRoom(room, reason);
                     return;
                 }
-                Optional<IsoThermalRoom> covering = RoomTemperatureManager.this.simulatedRooms.stream()
+                Optional<IsoThermalRoom> covering = RoomTemperatureManager.this.simulatedRooms.valueCollection().stream()
                         .filter(r -> r != room && r.isPlayerRoom() && r.containsSquare(newSquares.get(0)))
                         .findFirst();
                 if (covering.isPresent()) {

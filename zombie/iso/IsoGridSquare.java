@@ -140,7 +140,6 @@ import zombie.iso.sprite.shapers.WallShaper;
 import zombie.iso.sprite.shapers.WallShaperN;
 import zombie.iso.sprite.shapers.WallShaperW;
 import zombie.iso.sprite.shapers.WallShaperWhole;
-import zombie.iso.weather.RoomTemperatureManager;
 import zombie.iso.weather.fx.WeatherFxMask;
 import zombie.iso.worldgen.biomes.IBiome;
 import zombie.iso.worldgen.utils.SquareCoord;
@@ -5139,10 +5138,6 @@ public final class IsoGridSquare {
 
         if (s != null && e != null) {
             s.ReCalculateAll(e, getter);
-        }
-
-        if (RoomTemperatureManager.getInstance() != null && (GameServer.server || !GameClient.client)) {
-            RoomTemperatureManager.getInstance().onSquareChanged(this);
         }
     }
 
