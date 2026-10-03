@@ -27,7 +27,6 @@
 !/zombie/gameStates/IngameState.java
 !/zombie/iso/IsoCell.java
 !/zombie/iso/IsoChunk.java
-!/zombie/iso/IsoGridSquare.java
 !/zombie/iso/IsoWorld.java
 !/zombie/iso/areas/isoregion/IsoRegions.java
 !/zombie/iso/areas/isoregion/IsoRegionWorker.java
