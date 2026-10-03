@@ -18,6 +18,9 @@
 !/zombie/patchupdater/PatchUpdater.java
 !/zombie/iso/SnowTracks.java
 !/zombie/iso/fboRenderChunk/FBORenderSnowTracks.java
+!/zombie/network/packets/ThermostatPacket.java
+!/zombie/iso/weather/compat/ArcadiaRVInterior.java
+!/zombie/iso/weather/Thermostat.java
 
 # --- Modified vanilla files: thermal simulation ---
 !/zombie/GameWindow.java
@@ -35,6 +38,8 @@
 !/zombie/network/PacketTypes.java
 !/zombie/network/ServerMap.java
 !/zombie/entity/components/crafting/CraftUtil.java
+!/zombie/iso/objects/IsoGenerator.java
+!/zombie/Lua/LuaManager.java
 
 # --- Modified vanilla files: gameplay fixes ---
 !/zombie/inventory/InventoryItem.java
