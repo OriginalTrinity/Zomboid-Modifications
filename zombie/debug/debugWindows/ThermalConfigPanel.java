@@ -39,12 +39,17 @@ public class ThermalConfigPanel extends PZDebugWindow {
         RoomTemperatureManager.ThermalConfig.OPTIONS.stream()
                 .filter(o -> o.type() == RoomTemperatureManager.ThermalConfig.Option.Type.ROOM)
                 .forEach(this::renderField);
-        ImGui.separator();
         ImGui.text("Environment modifiers");
         ImGui.separator();
         RoomTemperatureManager.ThermalConfig.OPTIONS.stream()
                 .filter(o -> o.type() == RoomTemperatureManager.ThermalConfig.Option.Type.ENVIRONMENT)
                 .forEach(this::renderField);
+        ImGui.text("RV Interior modifiers");
+        ImGui.separator();
+        RoomTemperatureManager.ThermalConfig.OPTIONS.stream()
+                .filter(o -> o.type() == RoomTemperatureManager.ThermalConfig.Option.Type.RV)
+                .forEach(this::renderField);
+        ImGui.separator();
         ImGui.pushStyleColor(ImGuiCol.Button, 40, 148, 71, 255);
         ImGui.pushStyleColor(ImGuiCol.ButtonHovered, 59, 184, 94, 255);
         ImGui.pushStyleColor(ImGuiCol.ButtonActive, 105, 245, 145, 255);

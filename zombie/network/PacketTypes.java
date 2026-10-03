@@ -517,7 +517,8 @@ public class PacketTypes {
         RoomThermalRemove(RoomThermalRemovePacket.class),
         RoomThermalDebug(RoomThermalDebugPacket.class),
         RoomThermalPersistence(RoomThermalPersistencePacket.class),
-        RoomThermalConfig(RoomThermalConfigPacket.class);
+        RoomThermalConfig(RoomThermalConfigPacket.class),
+        Thermostat(ThermostatPacket.class);
 
         private Capability requiredCapability;
         public int packetPriority;

@@ -28,6 +28,9 @@ import zombie.iso.areas.isoregion.data.DataChunk;
 import zombie.iso.areas.isoregion.regions.IWorldRegion;
 import zombie.iso.areas.isoregion.regions.IsoChunkRegion;
 import zombie.iso.areas.isoregion.regions.IsoWorldRegion;
+import zombie.iso.objects.IsoGenerator;
+import zombie.iso.objects.IsoLightSwitch;
+import zombie.iso.weather.compat.ArcadiaRVInterior;
 import zombie.network.GameClient;
 import zombie.network.GameServer;
 import zombie.network.PacketTypes;
@@ -48,6 +51,7 @@ public class RoomTemperatureManager {
 
     private static final long PERSISTENCE_REFRESH_MS = 5000;
     private static final int RESTORE_RETRY_INTERVALS = 12;
+    private static final long THERMOSTAT_REQUEST_COOLDOWN_MS = 100; // below the UI's 250 ms send delay, so only spam is dropped
     private static RoomTemperatureManager instance;
     private volatile int regionGeneration;
 
@@ -65,6 +69,8 @@ public class RoomTemperatureManager {
     private final Set<Long> pendingPlayerRoomChunks;
     private final HashMap<Long, Pair<Float, Double>> unloadedTemperatureCache;
     private final HashMap<PersistentThermalData, Integer> restoreBackoff;
+    private final TLongObjectHashMap<Thermostat> thermostats = new TLongObjectHashMap<>();
+    private final HashMap<IsoPlayer, Long> lastThermostatRequestMillis = new HashMap<>();
 
     private double lastApplyWorldHours = -1;
     private double lastCalculateWorldHours = -1;
@@ -144,6 +150,7 @@ public class RoomTemperatureManager {
             this.groundTemperature = ThermalConfig.GROUND_TEMPERATURE + ThermalConfig.GROUND_OUTDOOR_FACTOR * (this.averageOutdoorHistory()[0] - ThermalConfig.GROUND_TEMPERATURE);
             this.simulatedRooms.valueCollection().forEach(IsoThermalRoom::calculateTargetTemperature);
             this.lastCalculateWorldHours = now;
+            this.updateClimateLoads();
         }
 
         // Runs every hour. Not using world age hours to be unaffected by game speed
@@ -603,7 +610,9 @@ public class RoomTemperatureManager {
     }
 
     private static RoomThermalSnapshotPacket.RoomThermalStateSnapshot snapshotOf(IsoThermalRoom room) {
-        return new RoomThermalSnapshotPacket.RoomThermalStateSnapshot(room.getId(), room.getX(), room.getY(), room.getZ(), room.isPlayerRoom(), room.getCurrentTemperature(), room.isPlayerRoom() ? room.getSquareHashes() : null);
+        Thermostat thermostat = room.getThermostat();
+        return new RoomThermalSnapshotPacket.RoomThermalStateSnapshot(room.getId(), room.getX(), room.getY(), room.getZ(), room.isPlayerRoom(), room.getCurrentTemperature(),
+                room.isPlayerRoom() ? room.getSquareHashes() : null, room.getBuildingKey(), thermostat != null && thermostat.isOn(), thermostat != null ? thermostat.getSetPoint() : Float.NaN);
     }
 
     private void syncRoomTemperaturesToClients() {
@@ -648,15 +657,19 @@ public class RoomTemperatureManager {
         }
     }
 
-    public void applySnapshotFromServer(long id, int x, int y, int z, boolean isPlayerRoom, float currentTemp, Set<Long> squareHashes) {
-        Optional<IsoThermalRoom> existing = this.getSimulatedRoomById(id);
+    public void applySnapshotFromServer(RoomThermalSnapshotPacket.RoomThermalStateSnapshot snapshot) {
+        Optional<IsoThermalRoom> existing = this.getSimulatedRoomById(snapshot.id());
         if (existing.isPresent()) {
-            existing.get().setCurrentTemperature(currentTemp);
-            existing.get().setSquareHashes(squareHashes);
+            existing.get().setCurrentTemperature(snapshot.currentTemp());
+            existing.get().setSquareHashes(snapshot.squareHashes());
         } else {
-            this.simulatedRooms.put(id, new IsoThermalRoom(id, x, y, z, isPlayerRoom, currentTemp, squareHashes));
+            this.simulatedRooms.put(snapshot.id(), new IsoThermalRoom(snapshot.id(), snapshot.x(), snapshot.y(), snapshot.z(), snapshot.isPlayerRoom(),
+                    snapshot.currentTemp(), snapshot.squareHashes(), snapshot.buildingKey()));
         }
-        this.pendingRoomRequests.remove(id);
+        if (!snapshot.isPlayerRoom()) {
+            this.putThermostat(snapshot.buildingKey(), snapshot.thermostatOn(), snapshot.setPoint());
+        }
+        this.pendingRoomRequests.remove(snapshot.id());
     }
 
     public void applyDeltaFromServer(long id, float currentTemp) {
@@ -682,6 +695,7 @@ public class RoomTemperatureManager {
 
     public void removePlayerFromCache(IsoPlayer player) {
         this.playerSyncedTemps.remove(player);
+        this.lastThermostatRequestMillis.remove(player);
     }
 
     public void handleRoomThermalDataRequest(IsoPlayer player, List<Long> requestedIds) {
@@ -730,10 +744,11 @@ public class RoomTemperatureManager {
         File tmpFile = new File(outFile.getPath() + ".tmp");
         try (DataOutputStream output = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(tmpFile)))) {
             output.writeBytes("RMTM"); // Identifier
-            output.writeShort(2); // Version number
+            output.writeShort(3); // Version number
             output.writeInt(data.size());
             for (PersistentThermalData ptd : data) this.savePersistentThermalData(output, ptd);
             this.saveOutdoorTemperatureHistory(output);
+            this.saveThermostatData(output);
         } catch (IOException e) {
             DebugType.General.printException(e, "Failed to save PersistentThermalData", LogSeverity.Error);
             return;
@@ -763,6 +778,16 @@ public class RoomTemperatureManager {
         }
     }
 
+    private void saveThermostatData(DataOutputStream output) throws IOException {
+        output.writeInt(this.thermostats.size());
+        for (long key : thermostats.keys()) {
+            Thermostat thermostat = thermostats.get(key);
+            output.writeLong(key);
+            output.writeBoolean(thermostat.isOn());
+            output.writeFloat(thermostat.getSetPoint());
+        }
+    }
+
     public void saveAll() {
         if (GameClient.client || Core.getInstance().isNoSave()) return;
         LinkedHashSet<PersistentThermalData> snapshot = new LinkedHashSet<>(this.staleRooms.valueCollection());
@@ -784,7 +809,7 @@ public class RoomTemperatureManager {
             byte b4 = input.readByte();
             short version = input.readShort();
 
-            if (b1 != 82 || b2 != 77 || b3 != 84 || b4 != 77 || version != 2) {
+            if (b1 != 82 || b2 != 77 || b3 != 84 || b4 != 77 || version < 2 || version > 3) {
                 DebugType.FileIO.println("Saved Persistent Thermal Data does not match current version!");
                 return;
             }
@@ -807,6 +832,16 @@ public class RoomTemperatureManager {
                 float sun = input.readFloat();
 
                 this.outdoorHistory.add(Triple.of(timeStamp, temp, sun));
+            }
+            if (version >= 3) {
+                int thermostatCount = input.readInt();
+                for (int i = 0; i < thermostatCount; i++) {
+                    long key = input.readLong();
+                    boolean on = input.readBoolean();
+                    float setPoint = input.readFloat();
+
+                    this.thermostats.put(key, new Thermostat(on, setPoint));
+                }
             }
         } catch (IOException e) {
             DebugType.General.printException(e, "Failed to load PersistentThermalData!", LogSeverity.Error);
@@ -834,6 +869,9 @@ public class RoomTemperatureManager {
         this.unloadedTemperatureCache.clear();
         this.lastPersistenceRequestMillis = 0;
         this.remotePersistenceDataReceived = false;
+        this.thermostats.clear();
+        this.lastThermostatRequestMillis.clear();
+        ArcadiaRVInterior.reset();
 
         ThermalConfig.load();
     }
@@ -931,6 +969,65 @@ public class RoomTemperatureManager {
         }
 
         return minX == Integer.MAX_VALUE ? null : new int[]{minX, minY};
+    }
+
+    public Thermostat getThermostat(long buildingKey) {
+        Thermostat thermostat = this.thermostats.get(buildingKey);
+        return thermostat != null ? thermostat : Thermostat.defaultFor(buildingKey);
+    }
+
+    public void putThermostat(long key, boolean on, float setPoint) {
+        Thermostat thermostat = this.thermostats.get(key);
+        if (thermostat == null) {
+            thermostat = new Thermostat(on, setPoint);
+        } else {
+            thermostat.setOn(on);
+            thermostat.setSetPoint(setPoint);
+        }
+        thermostat.clamp();
+        if (thermostat.isDefaultFor(key)) this.thermostats.remove(key);
+        else this.thermostats.put(key, thermostat);
+    }
+
+    public void setThermostat(BuildingDef buildingDef, boolean on, float setPoint) {
+        this.putThermostat(Thermostat.key(buildingDef), on, setPoint);
+        for (RoomDef roomDef : buildingDef.getRooms()) {
+            this.invalidateSyncedRoom(roomDef.getID());
+        }
+    }
+
+    public void handleThermostatRequest(IsoPlayer player, int x, int y, int z, boolean on, float setPoint) {
+        IsoGridSquare square = IsoWorld.instance.getCell().getGridSquare(x, y, z);
+        IsoLightSwitch lightSwitch = Thermostat.findThermostatSwitch(square);
+        if (lightSwitch == null || player == null || player.isDead() || !Float.isFinite(setPoint)) return;
+        if (PZMath.fastfloor(player.getZ()) != z) return;
+        if (IsoUtils.DistanceToSquared(player.getX(), player.getY(), x + 0.5f, y + 0.5f) > Thermostat.MAX_DISTANCE * Thermostat.MAX_DISTANCE) return;
+
+        BuildingDef buildingDef = Thermostat.getRoomDef(lightSwitch).getBuilding();
+        if (this.getThermostat(Thermostat.key(buildingDef)).equalsState(on, Thermostat.clamp(setPoint))) return;
+
+        long now = System.currentTimeMillis();
+        Long lastRequest = this.lastThermostatRequestMillis.get(player);
+        if (lastRequest != null && now - lastRequest < THERMOSTAT_REQUEST_COOLDOWN_MS) return;
+        this.lastThermostatRequestMillis.put(player, now);
+
+        this.setThermostat(buildingDef, on, setPoint);
+    }
+
+    private void updateClimateLoads() {
+        HashMap<IsoGenerator, Float> loads = new HashMap<>();
+        HashSet<Long> countedBuildings = new HashSet<>();
+        float outside = ClimateManager.getInstance().getTemperature();
+        for (IsoThermalRoom room : this.simulatedRooms.valueCollection()) {
+            if (!room.isVehicleInterior() || room.getPowerSource() != IsoThermalRoom.PowerSource.POWER_BANK) continue;
+            Thermostat thermostat = room.getThermostat();
+            if (thermostat == null || !thermostat.isOn() || !countedBuildings.add(room.getBuildingKey())) continue;
+            IsoGenerator generator = IsoGenerator.findActiveInRange(room.getSquares().getFirst());
+            if (generator == null) continue;
+            float load = ThermalConfig.RV_CLIMATE_BASE_LOAD + ThermalConfig.RV_CLIMATE_LOAD_PER_DEGREE * Math.abs(thermostat.getSetPoint() - outside);
+            loads.merge(generator, load, Float::sum);
+        }
+        IsoGenerator.setClimateLoads(loads);
     }
 
     public record PersistentThermalData(int x, int y, int z, float lastTemp, double lastUpdate, boolean isPlayerRoom) {
@@ -1049,6 +1146,12 @@ public class RoomTemperatureManager {
         public static float BASEMENT_OUTDOOR_FACTOR = 0.2f;
         public static float MIN_FLOOR_OUTDOOR_MULTIPLIER = 0.1f;
 
+        // RV Interior
+        public static float RV_BASE_COEFFICIENT;
+        public static float RV_SOLAR_GAIN_MULTIPLIER;
+        public static float RV_CLIMATE_BASE_LOAD;
+        public static float RV_CLIMATE_LOAD_PER_DEGREE;
+
         public static final List<Option<? extends Number>> OPTIONS = List.of(
                 Option.ofInteger("PLAYER_ROOM_STALE_MATCH_RADIUS", "Max tiles between a rebuilt player room and its saved temperature to still match", Option.Type.GLOBAL, 1, 256, 32),
                 Option.ofInteger("ROOM_SYNC_RELEVANCE_RADIUS", "Rooms within this many tiles of a player are synced to their client", Option.Type.GLOBAL, 1, 256, 80),
@@ -1073,7 +1176,7 @@ public class RoomTemperatureManager {
                 Option.ofFloat("HEATSOURCE_RADIUS_SCALE", "How strongly heat source radius correlates to its coefficient", Option.Type.ROOM, 0.0f, Float.MAX_VALUE, 1.0f),
                 Option.ofInteger("HEATSOURCE_PROXIMITY_RADIUS", "Max tiles from a heat source at which characters feel extra warmth", Option.Type.ROOM, 1, Integer.MAX_VALUE, 3),
                 Option.ofFloat("HEATSOURCE_PROXIMITY_STRENGTH", "Share of the gap to the heat source's temperature felt right next to it", Option.Type.ROOM, 0.01f, Float.MAX_VALUE, 0.5f),
-                Option.ofFloat("CLIMATE_CONTROL_COEFFICIENT", "AC strength while the world power is on", Option.Type.ROOM, 0.0f, Float.MAX_VALUE, 8.0f),
+                Option.ofFloat("CLIMATE_CONTROL_COEFFICIENT", "AC strength while powered", Option.Type.ROOM, 0.0f, Float.MAX_VALUE, 8.0f),
                 Option.ofFloat("TEMP_CHANGE_RATE_MULTIPLIER", "Overall speed at which rooms approach their target temperature", Option.Type.ROOM, 0.0f, Float.MAX_VALUE, 20.0f),
                 Option.ofFloat("INTERROOM_TRANSFER_MULTIPLIER", "Multiplier on heat exchange through openings and stairs between rooms", Option.Type.ROOM, 0.0f, Float.MAX_VALUE, 5.0f),
                 Option.ofFloat("HEATING_RATE_MULTIPLIER", "Speed multiplier while a room is warming up", Option.Type.ROOM, 0.0f, Float.MAX_VALUE, 1.0f),
@@ -1085,7 +1188,11 @@ public class RoomTemperatureManager {
                 Option.ofFloat("GROUND_OUTDOOR_FACTOR", "How much the ground follows the outdoor average (0 = fixed, 1 = fully)", Option.Type.ENVIRONMENT, 0.0f, 1.0f, 0.4f),
                 Option.ofFloat("BASEMENT_GROUND_COEFFICIENT", "Pull towards the ground temperature per level below ground", Option.Type.ENVIRONMENT, 0.0f, Float.MAX_VALUE, 5.0f),
                 Option.ofFloat("BASEMENT_OUTDOOR_FACTOR", "Reduction of outdoor heat exchange per level below ground", Option.Type.ENVIRONMENT, 0.0f, Float.MAX_VALUE, 0.2f),
-                Option.ofFloat("MIN_FLOOR_OUTDOOR_MULTIPLIER", "Lowest outdoor exchange multiplier a basement can reach", Option.Type.ENVIRONMENT, 0.0f, 1.0f, 0.1f)
+                Option.ofFloat("MIN_FLOOR_OUTDOOR_MULTIPLIER", "Lowest outdoor exchange multiplier a basement can reach", Option.Type.ENVIRONMENT, 0.0f, 1.0f, 0.1f),
+                Option.ofFloat("RV_BASE_COEFFICIENT", "Heat exchange with the outdoors through walls and roof, for RVs only", Option.Type.RV, 0.0f, Float.MAX_VALUE, 0.1f),
+                Option.ofFloat("RV_SOLAR_GAIN_MULTIPLIER", "Multiplier to SOLAR_ROOF_GAIN for RVs", Option.Type.RV, 0.0f, Float.MAX_VALUE, 2.0f),
+                Option.ofFloat("RV_CLIMATE_BASE_LOAD", "Generator fuel/hour an RV's running climate control always draws", Option.Type.RV, 0.0f, Float.MAX_VALUE, 0.02f),
+                Option.ofFloat("RV_CLIMATE_LOAD_PER_DEGREE", "Extra generator fuel/hour per °C between setpoint and outside", Option.Type.RV, 0.0f, Float.MAX_VALUE, 0.005f)
         );
         private static final String FILE_NAME = ZomboidFileSystem.instance.getCacheDir() + File.separator + "RoomThermalSim.ini";
 
@@ -1181,7 +1288,8 @@ public class RoomTemperatureManager {
             public enum Type {
                 GLOBAL,
                 ROOM,
-                ENVIRONMENT
+                ENVIRONMENT,
+                RV
             }
 
             public static Option<Integer> ofInteger(String name, String description, Type type, int min, int max, int defaultValue) {

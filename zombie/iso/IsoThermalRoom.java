@@ -13,6 +13,8 @@ import zombie.iso.objects.*;
 import zombie.iso.objects.interfaces.BarricadeAble;
 import zombie.iso.weather.ClimateManager;
 import zombie.iso.weather.RoomTemperatureManager;
+import zombie.iso.weather.Thermostat;
+import zombie.iso.weather.compat.ArcadiaRVInterior;
 import zombie.iso.weather.dbg.ThermalForecast;
 import zombie.network.GameClient;
 import zombie.network.PacketTypes;
@@ -43,6 +45,8 @@ public class IsoThermalRoom {
     private final ArrayList<RoomOpening> openings;
     private final ArrayList<StairLink> stairLinks;
     private final HashSet<Long> squareHashes;
+    private final boolean vehicleInterior;
+    private final long buildingKey;
 
     public record StairLink(IsoGridSquare bottomLanding, IsoGridSquare topLanding) {
     }
@@ -80,7 +84,9 @@ public class IsoThermalRoom {
         this.y = minY == Integer.MAX_VALUE ? seed.getY() : minY;
         this.z = seed.getZ();
         this.id = packRegionId(this.x, this.y, this.z);
-        this.currentTemp = IsoWorld.instance.isHydroPowerOn() ? 22.0f : ClimateManager.getInstance().getTemperature();
+        this.vehicleInterior = false;
+        this.buildingKey = -1;
+        this.currentTemp = ClimateManager.getInstance().getTemperature();
         this.targetTemp = Float.NaN;
         this.lastUpdate = GameTime.getInstance().getWorldAgeHours();
         this.debugInfo = Core.debug ? new DebugInfo() : null;
@@ -100,7 +106,9 @@ public class IsoThermalRoom {
         this.openings = new ArrayList<>();
         this.stairLinks = new ArrayList<>();
         this.squareHashes = null;
-        this.currentTemp = IsoWorld.instance.isHydroPowerOn() ? 22.0f : ClimateManager.getInstance().getTemperature();
+        this.vehicleInterior = ArcadiaRVInterior.isInterior(this.x, this.y);
+        this.buildingKey = Thermostat.key(room.getRoomDef().getBuilding());
+        this.currentTemp = this.isClimateControlled() ? this.getThermostat().getSetPoint() : ClimateManager.getInstance().getTemperature();
         this.targetTemp = Float.NaN;
         this.lastUpdate = GameTime.getInstance().getWorldAgeHours();
         this.debugInfo = Core.debug ? new DebugInfo() : null;
@@ -111,7 +119,7 @@ public class IsoThermalRoom {
     /**
      * Client-side display cache only - no live geometry, never simulated locally. Its {@link DebugInfo} is filled from the server.
      */
-    public IsoThermalRoom(long id, int x, int y, int z, boolean isPlayerRoom, float currentTemp, Set<Long> squareHashes) {
+    public IsoThermalRoom(long id, int x, int y, int z, boolean isPlayerRoom, float currentTemp, Set<Long> squareHashes, long buildingKey) {
         this.room = null;
         this.isPlayerRoom = isPlayerRoom;
         this.id = id;
@@ -125,6 +133,8 @@ public class IsoThermalRoom {
         this.stairLinks = null;
         this.squareHashes = isPlayerRoom && squareHashes != null ? new HashSet<>(squareHashes) : null;
         this.debugInfo = Core.debug ? new DebugInfo() : null;
+        this.vehicleInterior = false;
+        this.buildingKey = buildingKey;
     }
 
     private static long packRegionId(int x, int y, int z) {
@@ -459,11 +469,13 @@ public class IsoThermalRoom {
     }
 
     public float[] evaluateTargetTemperature(float outsideTemp, float sunStrength, NeighborTemperature neighborTemp, @Nullable float[] contributions) {
+        float baseCoefficient = this.vehicleInterior ? RoomTemperatureManager.ThermalConfig.RV_BASE_COEFFICIENT : RoomTemperatureManager.ThermalConfig.BASE_COEFFICIENT;
         float effectiveOutsideTemp = outsideTemp - RoomTemperatureManager.ThermalConfig.UPPER_FLOOR_TEMP_DROP * Math.max(this.z, 0); // Upper floor exchange temp
-        float solarOutsideTemp = effectiveOutsideTemp + RoomTemperatureManager.ThermalConfig.SOLAR_ROOF_GAIN * sunStrength * this.roofFraction; // Sun exposed roof exchange temp
+        float rvSolar = this.vehicleInterior ? RoomTemperatureManager.ThermalConfig.RV_SOLAR_GAIN_MULTIPLIER : 1.0f;
+        float solarOutsideTemp = effectiveOutsideTemp + RoomTemperatureManager.ThermalConfig.SOLAR_ROOF_GAIN * rvSolar * sunStrength * this.roofFraction; // Sun exposed roof exchange temp
         float outdoorMultiplier = this.getFloorOutdoorMultiplier();
 
-        float weightSum = RoomTemperatureManager.ThermalConfig.BASE_COEFFICIENT * outdoorMultiplier;
+        float weightSum = baseCoefficient * outdoorMultiplier;
         float weightedSum = weightSum * solarOutsideTemp;
 
         if (contributions != null) {
@@ -514,9 +526,10 @@ public class IsoThermalRoom {
             if (contributions != null) contributions[DebugInfo.CONTRIB_GROUND] += coefficient;
         }
 
-        if (IsoWorld.instance.isHydroPowerOn()) {
+        if (this.isClimateControlled()) {
+            float setPoint = this.getThermostat().getSetPoint();
             weightSum += RoomTemperatureManager.ThermalConfig.CLIMATE_CONTROL_COEFFICIENT;
-            weightedSum += RoomTemperatureManager.ThermalConfig.CLIMATE_CONTROL_COEFFICIENT * 22.0f;
+            weightedSum += RoomTemperatureManager.ThermalConfig.CLIMATE_CONTROL_COEFFICIENT * setPoint;
 
             if (contributions != null) contributions[DebugInfo.CONTRIB_CLIMATE] = RoomTemperatureManager.ThermalConfig.CLIMATE_CONTROL_COEFFICIENT;
         }
@@ -640,9 +653,46 @@ public class IsoThermalRoom {
         return this.weightedSum;
     }
 
+    public boolean isVehicleInterior() {
+        return this.vehicleInterior;
+    }
+
+    public long getBuildingKey() {
+        return this.buildingKey;
+    }
+
+    @Nullable
+    public Thermostat getThermostat() {
+        if (this.isPlayerRoom) return null;
+        return RoomTemperatureManager.getInstance().getThermostat(this.buildingKey);
+    }
+
+    public static PowerSource powerSourceAt(IsoGridSquare sq, boolean vehicleInterior) {
+        if (sq != null) {
+            if (IsoWorld.instance.isHydroPowerOn() && sq.hasGridPower()) return PowerSource.GRID;
+            if (vehicleInterior && sq.haveElectricity()) return PowerSource.POWER_BANK;
+        }
+        return PowerSource.NONE;
+    }
+
+    public PowerSource getPowerSource() {
+        return this.squares.isEmpty() ? PowerSource.NONE : powerSourceAt(this.squares.getFirst(), this.vehicleInterior);
+    }
+
+    public boolean isClimateControlled() {
+        Thermostat thermostat = this.getThermostat();
+        return thermostat != null && thermostat.isOn() && this.getPowerSource() != PowerSource.NONE;
+    }
+
     @FunctionalInterface
     public interface NeighborTemperature {
         float get(IsoThermalRoom room);
+    }
+
+    public enum PowerSource {
+        NONE,
+        GRID,
+        POWER_BANK
     }
 
     /**

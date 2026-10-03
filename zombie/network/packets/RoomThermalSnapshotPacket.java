@@ -38,6 +38,11 @@ public class RoomThermalSnapshotPacket implements INetworkPacket {
             b.putBoolean(r.isPlayerRoom());
             b.putFloat(r.currentTemp());
             if (r.isPlayerRoom()) writeTiles(b, r.squareHashes());
+            else {
+                b.putLong(r.buildingKey());
+                b.putBoolean(r.thermostatOn());
+                b.putFloat(r.setPoint());
+            }
         }
     }
 
@@ -51,8 +56,18 @@ public class RoomThermalSnapshotPacket implements INetworkPacket {
             int z = b.getInt();
             boolean isPlayerRoom = b.getBoolean();
             float temp = b.getFloat();
-            Set<Long> squareHashes = isPlayerRoom ? readTiles(b, z) : null;
-            RoomTemperatureManager.getInstance().applySnapshotFromServer(id, x, y, z, isPlayerRoom, temp, squareHashes);
+            Set<Long> squareHashes = null;
+            long buildingKey = -1;
+            boolean on = false;
+            float setPoint = Float.NaN;
+            if (isPlayerRoom) {
+                squareHashes = readTiles(b, z);
+            } else {
+                buildingKey = b.getLong();
+                on = b.getBoolean();
+                setPoint = b.getFloat();
+            }
+            RoomTemperatureManager.getInstance().applySnapshotFromServer(new RoomThermalStateSnapshot(id, x, y, z, isPlayerRoom, temp, squareHashes, buildingKey, on, setPoint));
         }
     }
 
@@ -86,5 +101,7 @@ public class RoomThermalSnapshotPacket implements INetworkPacket {
         return squareHashes;
     }
 
-    public record RoomThermalStateSnapshot(long id, int x, int y, int z, boolean isPlayerRoom, float currentTemp, Set<Long> squareHashes) {}
+    /** {@code buildingKey}, {@code thermostatOn} and {@code setPoint} are only used for map rooms, {@code squareHashes} only for player rooms. */
+    public record RoomThermalStateSnapshot(long id, int x, int y, int z, boolean isPlayerRoom, float currentTemp, Set<Long> squareHashes,
+                                           long buildingKey, boolean thermostatOn, float setPoint) {}
 }
