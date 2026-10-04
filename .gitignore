@@ -55,6 +55,8 @@
 !/zombie/popman/NetworkZombieSimulator.java
 !/zombie/CombatManager.java
 !/zombie/iso/fboRenderChunk/FBORenderSnow.java
+!/zombie/iso/areas/DesignationZoneAnimal.java
+!/zombie/network/packets/SyncZonePacket.java
 
 # --- Modified vanilla files: networking ---
 !zombie/network/packets/vehicle/VehiclePhysicsUnreliablePacket.java
