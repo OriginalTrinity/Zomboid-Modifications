@@ -74,31 +74,13 @@ public final class DesignationZoneAnimal extends DesignationZone {
         }
 
         for (int x = zone.x; x < zone.x + zone.w; x++) {
-            DesignationZoneAnimal cZone = getZone(x, zone.y - 1, zone.z);
-            if (cZone != null && !result.contains(cZone) && cZone != previousZone) {
-                result.add(cZone);
-                newConnected.add(cZone);
-            }
-
-            cZone = getZone(x, zone.y + zone.h, zone.z);
-            if (cZone != null && !result.contains(cZone) && cZone != previousZone) {
-                result.add(cZone);
-                newConnected.add(cZone);
-            }
+            addConnectedZone(result, newConnected, previousZone, x, zone.y, x, zone.y - 1, zone.z);
+            addConnectedZone(result, newConnected, previousZone, x, zone.y + zone.h - 1, x, zone.y + zone.h, zone.z);
         }
 
         for (int y = zone.y; y < zone.y + zone.h; y++) {
-            DesignationZoneAnimal cZone = getZone(zone.x - 1, y, zone.z);
-            if (cZone != null && !result.contains(cZone) && cZone != previousZone) {
-                result.add(cZone);
-                newConnected.add(cZone);
-            }
-
-            cZone = getZone(zone.x + zone.w, y, zone.z);
-            if (cZone != null && !result.contains(cZone) && cZone != previousZone) {
-                result.add(cZone);
-                newConnected.add(cZone);
-            }
+            addConnectedZone(result, newConnected, previousZone, zone.x, y, zone.x - 1, y, zone.z);
+            addConnectedZone(result, newConnected, previousZone, zone.x + zone.w - 1, y, zone.x + zone.w, y, zone.z);
         }
 
         for (int i = 0; i < newConnected.size(); i++) {
@@ -109,6 +91,29 @@ public final class DesignationZoneAnimal extends DesignationZone {
 
         newConnected.clear();
         return result;
+    }
+
+    private static void addConnectedZone(ArrayList<DesignationZoneAnimal> result, ArrayList<DesignationZoneAnimal> newConnected, DesignationZoneAnimal previousZone, int x, int y, int outsideX, int outsideY, int z) {
+        DesignationZoneAnimal cZone = getZone(outsideX, outsideY, z);
+        if (cZone != null && !result.contains(cZone) && cZone != previousZone && isOpenBetween(x, y, outsideX, outsideY, z)) {
+            result.add(cZone);
+            newConnected.add(cZone);
+        }
+    }
+
+    private static boolean isOpenBetween(int x, int y, int outsideX, int outsideY, int z) {
+        IsoCell cell = IsoWorld.instance.getCell();
+        if (cell == null) {
+            return true;
+        }
+
+        IsoGridSquare square = cell.getGridSquare(x, y, z);
+        IsoGridSquare outside = cell.getGridSquare(outsideX, outsideY, z);
+        if (square == null || outside == null) {
+            return true; // not loaded; keep vanilla behaviour
+        }
+
+        return !square.isWallTo(outside) && !square.isWindowTo(outside) && !square.isHoppableTo(outside) && square.getDoorTo(outside) == null;
     }
 
     public void createSurroundingFence() {
@@ -355,13 +360,17 @@ public final class DesignationZoneAnimal extends DesignationZone {
         ArrayList<DesignationZoneAnimal> connectedZones = getAllDZones(null, zone, null);
 
         for (int i = 0; i < connectedZones.size(); i++) {
-            designationAnimalZoneList.remove(connectedZones.get(i));
-            allZones.remove(connectedZones.get(i));
+            DesignationZoneAnimal connectedZone = connectedZones.get(i);
+            removeSingleZone(connectedZone);
+            if (doSync) {
+                connectedZone.sync();
+            }
         }
+    }
 
-        if (doSync) {
-            zone.sync();
-        }
+    public static void removeSingleZone(DesignationZoneAnimal zone) {
+        designationAnimalZoneList.remove(zone);
+        allZones.remove(zone);
     }
 
     public static void removeItemFromGround(IsoWorldInventoryObject item) {

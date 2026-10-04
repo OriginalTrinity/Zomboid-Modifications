@@ -31,6 +31,7 @@ public class SyncZonePacket implements INetworkPacket {
     DesignationZone designationZone;
     @JSONField
     boolean zoneAdded;
+    boolean isDesignationZone;
 
     @Override
     public void write(ByteBufferWriter b) {
@@ -51,8 +52,8 @@ public class SyncZonePacket implements INetworkPacket {
 
     @Override
     public void parse(ByteBufferReader b, IConnection connection) {
-        boolean isDesignationZone = b.getBoolean();
-        if (isDesignationZone) {
+        this.isDesignationZone = b.getBoolean();
+        if (this.isDesignationZone) {
             this.zoneAdded = b.getBoolean();
             if (this.zoneAdded) {
                 this.designationZone = DesignationZone.load(b.bb, IsoWorld.getWorldVersion());
@@ -71,6 +72,10 @@ public class SyncZonePacket implements INetworkPacket {
 
     @Override
     public void processClient(UdpConnection connection) {
+        if (this.isDesignationZone && this.designationZone == null) {
+            return; // removal of a zone this client doesn't know, or a zone type that can't be loaded
+        }
+
         if (this.designationZone != null) {
             if (!this.zoneAdded) {
                 this.removeDesignationZone();
@@ -119,7 +124,7 @@ public class SyncZonePacket implements INetworkPacket {
     private void removeDesignationZone() {
         if (this.designationZone != null) {
             if (this.designationZone.type.equals("AnimalZone")) {
-                DesignationZoneAnimal.removeZone((DesignationZoneAnimal)this.designationZone, false);
+                DesignationZoneAnimal.removeSingleZone((DesignationZoneAnimal)this.designationZone);
             } else {
                 DesignationZone.removeZone(this.designationZone, false);
             }
