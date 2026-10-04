@@ -283,7 +283,9 @@ public class ScriptsDictionary {
 
             DebugType.General.debugln("- Parse load list: " + this.name);
 
-            for (Entry<String, DictionaryScriptInfo<T>> entry : this.loadList.entrySet()) {
+            // Reset the stored entries, not the load list: isLoaded is saved with the dictionary, so a script that's no
+            // longer loaded (e.g. removed by a mod update) would otherwise stay loaded and clients would refuse to join
+            for (Entry<String, DictionaryScriptInfo<T>> entry : this.namedMap.entrySet()) {
                 entry.getValue().isLoaded = false;
             }
 
