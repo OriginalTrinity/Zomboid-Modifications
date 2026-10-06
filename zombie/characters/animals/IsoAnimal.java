@@ -2851,6 +2851,13 @@ public class IsoAnimal extends IsoPlayer implements IAnimalVisual {
     }
 
     public void setDZone(DesignationZoneAnimal dZone) {
+        if (this.dZone == dZone) {
+            if (dZone != null) {
+                dZone.addAnimal(this);
+            }
+            return;
+        }
+
         if (this.dZone != null) {
             this.dZone.removeAnimal(this);
         }
