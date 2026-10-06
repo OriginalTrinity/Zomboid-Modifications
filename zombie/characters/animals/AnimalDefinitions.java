@@ -448,131 +448,131 @@ public class AnimalDefinitions {
                     }
 
                     if ("litterEatTogether".equalsIgnoreCase(key)) {
-                        def.litterEatTogether = Boolean.parseBoolean(valueStr);
+                        def.litterEatTogether = parseBool(valueStr);
                     }
 
                     if ("udder".equalsIgnoreCase(key)) {
-                        def.udder = Boolean.parseBoolean(valueStr);
+                        def.udder = parseBool(valueStr);
                     }
 
                     if ("female".equalsIgnoreCase(key)) {
-                        def.female = Boolean.parseBoolean(valueStr);
+                        def.female = parseBool(valueStr);
                     }
 
                     if ("male".equalsIgnoreCase(key)) {
-                        def.male = Boolean.parseBoolean(valueStr);
+                        def.male = parseBool(valueStr);
                     }
 
                     if ("addTrackingXp".equalsIgnoreCase(key)) {
-                        def.addTrackingXp = Boolean.parseBoolean(valueStr);
+                        def.addTrackingXp = parseBool(valueStr);
                     }
 
                     if ("fleeZombies".equalsIgnoreCase(key)) {
-                        def.fleeZombies = Boolean.parseBoolean(valueStr);
+                        def.fleeZombies = parseBool(valueStr);
                     }
 
                     if ("stressAboveGround".equalsIgnoreCase(key)) {
-                        def.stressAboveGround = Boolean.parseBoolean(valueStr);
+                        def.stressAboveGround = parseBool(valueStr);
                     }
 
                     if ("stressUnderRain".equalsIgnoreCase(key)) {
-                        def.stressUnderRain = Boolean.parseBoolean(valueStr);
+                        def.stressUnderRain = parseBool(valueStr);
                     }
 
                     if ("canClimbFences".equalsIgnoreCase(key)) {
-                        def.canClimbFences = Boolean.parseBoolean(valueStr);
+                        def.canClimbFences = parseBool(valueStr);
                     }
 
                     if ("needMom".equalsIgnoreCase(key)) {
-                        def.needMom = Boolean.parseBoolean(valueStr);
+                        def.needMom = parseBool(valueStr);
                     }
 
                     if ("canBeDomesticated".equalsIgnoreCase(key)) {
-                        def.canBeDomesticated = Boolean.parseBoolean(valueStr);
+                        def.canBeDomesticated = parseBool(valueStr);
                     }
 
                     if ("knockdownAttack".equalsIgnoreCase(key)) {
-                        def.knockdownAttack = Boolean.parseBoolean(valueStr);
+                        def.knockdownAttack = parseBool(valueStr);
                     }
 
                     if ("canDoLaceration".equalsIgnoreCase(key)) {
-                        def.canDoLaceration = Boolean.parseBoolean(valueStr);
+                        def.canDoLaceration = parseBool(valueStr);
                     }
 
                     if ("canClimbStairs".equalsIgnoreCase(key)) {
-                        def.canClimbStairs = Boolean.parseBoolean(valueStr);
+                        def.canClimbStairs = parseBool(valueStr);
                     }
 
                     if ("canBeAlerted".equalsIgnoreCase(key)) {
-                        def.canBeAlerted = Boolean.parseBoolean(valueStr);
+                        def.canBeAlerted = parseBool(valueStr);
                     }
 
                     if ("attackIfStressed".equalsIgnoreCase(key)) {
-                        def.attackIfStressed = Boolean.parseBoolean(valueStr);
+                        def.attackIfStressed = parseBool(valueStr);
                     }
 
                     if ("alwaysFleeHumans".equalsIgnoreCase(key)) {
-                        def.alwaysFleeHumans = Boolean.parseBoolean(valueStr);
+                        def.alwaysFleeHumans = parseBool(valueStr);
                     }
 
                     if ("canBeAttached".equalsIgnoreCase(key)) {
-                        def.canBeAttached = Boolean.parseBoolean(valueStr);
+                        def.canBeAttached = parseBool(valueStr);
                     }
 
                     if ("canBeTransported".equalsIgnoreCase(key)) {
-                        def.canBeTransported = Boolean.parseBoolean(valueStr);
+                        def.canBeTransported = parseBool(valueStr);
                     }
 
                     if ("eatFromMother".equalsIgnoreCase(key)) {
-                        def.eatFromMother = Boolean.parseBoolean(valueStr);
+                        def.eatFromMother = parseBool(valueStr);
                     }
 
                     if ("periodicRun".equalsIgnoreCase(key)) {
-                        def.periodicRun = Boolean.parseBoolean(valueStr);
+                        def.periodicRun = parseBool(valueStr);
                     }
 
                     if ("eatGrass".equalsIgnoreCase(key)) {
-                        def.eatGrass = Boolean.parseBoolean(valueStr);
+                        def.eatGrass = parseBool(valueStr);
                     }
 
                     if ("sitRandomly".equalsIgnoreCase(key)) {
-                        def.sitRandomly = Boolean.parseBoolean(valueStr);
+                        def.sitRandomly = parseBool(valueStr);
                     }
 
                     if ("canBeMilked".equalsIgnoreCase(key)) {
-                        def.canBeMilked = Boolean.parseBoolean(valueStr);
+                        def.canBeMilked = parseBool(valueStr);
                     }
 
                     if ("canBePicked".equalsIgnoreCase(key)) {
-                        def.canBePicked = Boolean.parseBoolean(valueStr);
+                        def.canBePicked = parseBool(valueStr);
                     }
 
                     if ("collidable".equalsIgnoreCase(key)) {
-                        def.collidable = Boolean.parseBoolean(valueStr);
+                        def.collidable = parseBool(valueStr);
                     }
 
                     if ("canThump".equalsIgnoreCase(key)) {
-                        def.canThump = Boolean.parseBoolean(valueStr);
+                        def.canThump = parseBool(valueStr);
                     }
 
                     if ("wild".equalsIgnoreCase(key)) {
-                        def.wild = Boolean.parseBoolean(valueStr);
+                        def.wild = parseBool(valueStr);
                     }
 
                     if ("dontAttackOtherMale".equalsIgnoreCase(key)) {
-                        def.dontAttackOtherMale = Boolean.parseBoolean(valueStr);
+                        def.dontAttackOtherMale = parseBool(valueStr);
                     }
 
                     if ("canBePet".equalsIgnoreCase(key)) {
-                        def.canBePet = Boolean.parseBoolean(valueStr);
+                        def.canBePet = parseBool(valueStr);
                     }
 
                     if ("attackBack".equalsIgnoreCase(key)) {
-                        def.attackBack = Boolean.parseBoolean(valueStr);
+                        def.attackBack = parseBool(valueStr);
                     }
 
                     if ("canBeFeedByHand".equalsIgnoreCase(key)) {
-                        def.canBeFeedByHand = Boolean.parseBoolean(valueStr);
+                        def.canBeFeedByHand = parseBool(valueStr);
                     }
 
                     if ("eatTypeTrough".equalsIgnoreCase(key)) {
@@ -650,7 +650,7 @@ public class AnimalDefinitions {
                     }
 
                     if ("canBeKilledWithoutWeapon".equalsIgnoreCase(key)) {
-                        def.canBeKilledWithoutWeapon = Boolean.parseBoolean(valueStr);
+                        def.canBeKilledWithoutWeapon = parseBool(valueStr);
                     }
 
                     if ("feedByHandAnim".equalsIgnoreCase(key)) {
@@ -923,5 +923,14 @@ public class AnimalDefinitions {
     public boolean isBaby() {
         AnimalGrowStage stage = this.getGrowStage();
         return stage != null && stage.nextStage != null;
+    }
+
+    private static boolean parseBool(String s) {
+        if ("true".equalsIgnoreCase(s)) return true;
+        try {
+            return Double.parseDouble(s) != 0.0;
+        } catch (NumberFormatException e) {
+            return false;
+        }
     }
 }

@@ -447,6 +447,10 @@ public class AnimalData {
 
     private void updateMilk() {
         if (this.parent.adef.udder) {
+            // Fix mothers that already gave before our udder fix
+            if (!this.canHaveMilk && this.parent.getBabies() != null && !this.parent.getBabies().isEmpty()) {
+                this.setCanHaveMilk(true);
+            }
             if (this.canHaveMilk) {
                 this.setMilkQuantity(this.milkQty + this.getMilkInc());
                 if (!this.isPregnant()
