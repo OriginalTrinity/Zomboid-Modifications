@@ -12,10 +12,7 @@ import zombie.characters.CharacterStat;
 import zombie.characters.IsoGameCharacter;
 import zombie.characters.IsoPlayer;
 import zombie.characters.Stats;
-import zombie.characters.animals.AnimalAllele;
-import zombie.characters.animals.AnimalDefinitions;
-import zombie.characters.animals.AnimalGene;
-import zombie.characters.animals.IsoAnimal;
+import zombie.characters.animals.*;
 import zombie.characters.animals.behavior.BehaviorAction;
 import zombie.core.Core;
 import zombie.core.math.PZMath;
@@ -140,6 +137,9 @@ public class AnimalData {
             this.lastHourCheck = GameTime.getInstance().getHour();
             this.parent.setHoursSurvived(this.parent.getHoursSurvived() + 1.0);
             hourGrow = true;
+            if (!this.parent.pendingCatchUp) {
+                this.parent.timeSinceLastUpdate = GameTime.getInstance().getCalender().getTimeInMillis();
+            }
         }
 
         boolean growUp = false;
@@ -399,6 +399,10 @@ public class AnimalData {
     }
 
     public void hourGrow(boolean meta) {
+        this.hourGrow(meta, false);
+    }
+
+    public void hourGrow(boolean meta, boolean sheltered) {
         this.parent.ignoredTrough.clear();
         if (this.lastImpregnateTime > 0) {
             this.lastImpregnateTime--;
@@ -407,7 +411,7 @@ public class AnimalData {
         this.updateHungerAndThirst(meta);
         this.dropFeather(meta);
         this.updateHealth();
-        if (meta) {
+        if (meta && !sheltered) {
             this.eatAndDrinkAfterMeta();
         }
 
@@ -754,112 +758,65 @@ public class AnimalData {
     private void eatAndDrinkAfterMeta() {
         if (this.parent.getVehicle() != null) {
             this.eatAndDrinkAfterMetaVehicle();
-        } else {
-            Stats stats = this.parent.getStats();
-            int iteration = 0;
+            return;
+        }
 
-            while (iteration++ < 50 && stats.get(CharacterStat.HUNGER) >= 0.1F) {
-                if (this.parent.isBaby()
+        Stats stats = this.parent.getStats();
+        ArrayList<DesignationZoneAnimal> zones = this.parent.getConnectedDZone();
+        int iteration = 0;
+
+        while (iteration++ < 50 && stats.get(CharacterStat.HUNGER) >= 0.1f) {
+            this.parent.eatFromGround = null;
+            this.parent.eatFromTrough = null;
+            if (this.parent.isBaby()
                     && this.parent.adef.eatFromMother
                     && this.parent.mother != null
                     && this.parent.mother.isExistInTheWorld()
                     && this.parent.mother.getData().getMilkQuantity() > 0.1) {
-                    stats.remove(CharacterStat.HUNGER, 0.2F);
-                    this.parent.mother.getData().setMilkQuantity(this.parent.mother.getData().getMilkQuantity() - Rand.Next(0.1F, 0.3F));
-                } else {
-                    boolean found = false;
+                stats.remove(CharacterStat.HUNGER, 0.2f);
+                this.parent.mother.getData().setMilkQuantity(this.parent.mother.getData().getMilkQuantity() - Rand.Next(0.1f, 0.3f));
+                continue;
+            }
 
-                    for (int k = 0; k < this.parent.getConnectedDZone().size(); k++) {
-                        DesignationZoneAnimal zone = this.parent.getConnectedDZone().get(k);
-                        if (zone.troughs.isEmpty() && zone.foodOnGround.isEmpty()) {
-                            break;
-                        }
+            if (this.parent.adef.eatTypeTrough != null) {
+                IsoWorldInventoryObject groundFood = this.findMetaGroundFood(zones);
+                if (groundFood != null) {
+                    this.eatItem(groundFood.getItem(), true);
+                    continue;
+                }
 
-                        for (int i = 0; i < zone.foodOnGround.size(); i++) {
-                            IsoWorldInventoryObject food = zone.foodOnGround.get(i);
-                            if (this.parent.adef.eatTypeTrough != null) {
-                                for (int j = 0; j < this.parent.adef.eatTypeTrough.size(); j++) {
-                                    String type = this.parent.adef.eatTypeTrough.get(j);
-                                    if (food.getItem() instanceof Food) {
-                                        if (type.equals(((Food)food.getItem()).getFoodType()) || type.equals(food.getItem().getAnimalFeedType())) {
-                                            this.parent.eatFromGround = food;
-                                            break;
-                                        }
-                                    } else if (food.getItem() instanceof DrainableComboItem && type.equals(food.getItem().getAnimalFeedType())) {
-                                        this.parent.eatFromGround = food;
-                                        break;
-                                    }
-                                }
-
-                                if (this.parent.eatFromGround != null) {
-                                    this.eat();
-                                    found = true;
-                                }
-                                break;
-                            }
-                        }
-
-                        if (!zone.troughs.isEmpty()) {
-                            for (int i = 0; i < zone.troughs.size(); i++) {
-                                IsoFeedingTrough trough = zone.troughs.get(i);
-                                if (this.canEatFromTrough(trough) != null) {
-                                    this.parent.eatFromTrough = trough;
-                                    this.eat();
-                                    found = true;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-
-                    if (!found) {
-                        break;
-                    }
+                InventoryItem troughFood = this.findMetaTroughFood(zones);
+                if (troughFood != null) {
+                    this.eatItem(troughFood, false);
+                    continue;
                 }
             }
 
-            iteration = 0;
-
-            while (iteration++ < 50 && stats.get(CharacterStat.THIRST) >= 0.1F) {
-                boolean found = false;
-                int k = 0;
-
-                while (true) {
-                    if (k < this.parent.getConnectedDZone().size()) {
-                        DesignationZoneAnimal zone = this.parent.getConnectedDZone().get(k);
-                        if (!zone.nearWaterSquares.isEmpty()) {
-                            this.parent.drinkFromRiver = zone.nearWaterSquares.getFirst();
-                            this.drink();
-                            found = true;
-                        } else if (IsoPuddles.getInstance().getPuddlesSize() > 0.13F) {
-                            this.parent.drinkFromPuddle = this.parent.getSquare();
-                            this.drink();
-                            found = true;
-                        } else {
-                            for (int i = 0; i < zone.troughs.size(); i++) {
-                                IsoFeedingTrough trough = zone.troughs.get(i);
-                                if (trough.getWater() > 0.0F) {
-                                    this.parent.drinkFromTrough = trough;
-                                    this.drink();
-                                    found = true;
-                                    break;
-                                }
-                            }
-
-                            if (found) {
-                                k++;
-                                continue;
-                            }
-                        }
-                    }
-
-                    if (!found) {
-                        return;
-                    }
-                    break;
-                }
-            }
+            if (this.eatMetaGrass()) continue;
+            break;
         }
+
+        iteration = 0;
+        while (iteration++ < 50 && stats.get(CharacterStat.THIRST) >= 0.1f) {
+            this.parent.drinkFromRiver = null;
+            this.parent.drinkFromPuddle = null;
+            this.parent.drinkFromTrough = null;
+            IsoGridSquare river = findMetaRiver(zones);
+            if (river != null) {
+                this.parent.drinkFromRiver = river;
+            } else if (AnimalCatchUp.hasPuddles() && this.parent.getCurrentSquare() != null) {
+                this.parent.drinkFromPuddle = this.parent.getCurrentSquare();
+            } else {
+                IsoFeedingTrough trough = findMetaWaterTrough(zones);
+                if (trough == null) break;
+                this.parent.drinkFromTrough = trough;
+            }
+            this.drink();
+        }
+
+        this.parent.drinkFromRiver = null;
+        this.parent.drinkFromPuddle = null;
+        this.parent.drinkFromTrough = null;
     }
 
     private boolean eatFromVehicle() {
@@ -898,6 +855,62 @@ public class AnimalData {
         } else {
             return false;
         }
+    }
+
+    private IsoWorldInventoryObject findMetaGroundFood(ArrayList<DesignationZoneAnimal> zones) {
+        for (DesignationZoneAnimal zone : zones) {
+            ArrayList<IsoWorldInventoryObject> foods = zone.foodOnGround;
+            for (IsoWorldInventoryObject food : foods) {
+                if (food.isExistInTheWorld() && food.getItem() != null && this.parent.getBehavior().canEatThis(food.getItem())) {
+                    return food;
+                }
+            }
+        }
+        return null;
+    }
+
+    private InventoryItem findMetaTroughFood(ArrayList<DesignationZoneAnimal> zones) {
+        for (DesignationZoneAnimal zone : zones) {
+            ArrayList<IsoFeedingTrough> troughs = zone.getTroughs();
+
+            for (IsoFeedingTrough trough : troughs) {
+                InventoryItem item = this.canEatFromTrough(trough);
+                if (item != null) return item;
+            }
+        }
+        return null;
+    }
+
+    private boolean eatMetaGrass() {
+        if (!this.parent.adef.eatGrass) {
+            return false;
+        }
+
+        IsoGridSquare square = AnimalCatchUp.pollGrass();
+        if (square == null) return false;
+
+        square.removeGrass();
+        this.parent.getStats().remove(CharacterStat.HUNGER, 0.15f);
+        return true;
+    }
+
+    private static IsoGridSquare findMetaRiver(ArrayList<DesignationZoneAnimal> zones) {
+        for (DesignationZoneAnimal zone : zones) {
+            if (!zone.nearWaterSquares.isEmpty()) {
+                return zone.nearWaterSquares.getFirst();
+            }
+        }
+        return null;
+    }
+
+    private static IsoFeedingTrough findMetaWaterTrough(ArrayList<DesignationZoneAnimal> zones) {
+        for (DesignationZoneAnimal zone : zones) {
+            ArrayList<IsoFeedingTrough> troughs = zone.getTroughs();
+            for (IsoFeedingTrough trough : troughs) {
+                if (trough.getWater() > 0.0f) return trough;
+            }
+        }
+        return null;
     }
 
     @Deprecated

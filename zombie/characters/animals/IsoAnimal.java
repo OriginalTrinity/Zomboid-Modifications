@@ -122,6 +122,7 @@ import zombie.vehicles.VehiclePart;
 
 @UsedFromLua
 public class IsoAnimal extends IsoPlayer implements IAnimalVisual {
+    static final long HOUR_MS = 3600000L;
     public static final int INVALID_SQUARE_XY = Integer.MAX_VALUE;
     public static final float SOUND_RADIUS_MULTIPLIER_WILD = 3.0F;
     private static final float MIN_PLAYER_ACCEPTANCE_FOR_SOUND = 40.0F;
@@ -192,6 +193,8 @@ public class IsoAnimal extends IsoPlayer implements IAnimalVisual {
     public boolean alerted;
     public IsoMovingObject alertedChr;
     public boolean fromMeta;
+    public boolean pendingCatchUp;
+    public long pendingSince;
     private float thumpDelay = 20000.0F;
     private boolean shouldBeSkeleton;
     private ArrayList<IsoAnimal> babies;
@@ -606,6 +609,18 @@ public class IsoAnimal extends IsoPlayer implements IAnimalVisual {
         }
 
         return false;
+    }
+
+    void relinkMother(List<IsoAnimal> animals) {
+        if (this.mother != null && this.mother.isExistInTheWorld()) return;
+
+        if (this.attachBackToMother == 0 && this.motherId > 0) {
+            this.attachBackToMother = this.motherId;
+        }
+
+        if (this.attachBackToMother > 0) {
+            this.findMotherAndAttach(animals);
+        }
     }
 
     private void checkZone() {
@@ -1318,7 +1333,7 @@ public class IsoAnimal extends IsoPlayer implements IAnimalVisual {
 
         output.putInt(this.getData().getAge());
         output.putDouble(this.getHoursSurvived());
-        output.putLong(GameTime.getInstance().getCalender().getTimeInMillis());
+        output.putLong(this.timeSinceLastUpdate >= 0 ? this.timeSinceLastUpdate : GameTime.getInstance().getCalender().getTimeInMillis());
         output.putFloat(this.getData().getSize());
         output.putInt(this.attachBackToMother);
         if (this.mother != null) {
@@ -1662,7 +1677,13 @@ public class IsoAnimal extends IsoPlayer implements IAnimalVisual {
     }
 
     public void unloaded() {
-        this.timeSinceLastUpdate = GameTime.getInstance().getCalender().getTimeInMillis();
+        // The live hourly tick keeps the clock current; overwriting it here would drop the time since that tick. A live
+        // clock lags at most the hour left over by a catch-up plus the time to the next hour tick, so one more than 2 h
+        // old is stale (e.g. an animal that left AnimalCatchUp's queue and came back): reset it.
+        long now = GameTime.getInstance().getCalender().getTimeInMillis();
+        if (!this.pendingCatchUp && (this.timeSinceLastUpdate < 0L || this.timeSinceLastUpdate < now - 2 * HOUR_MS)) {
+            this.timeSinceLastUpdate = now;
+        }
         if (this.getData().getAttachedTree() != null) {
             this.attachBackToTreeX = this.getData().getAttachedTreeX();
             this.attachBackToTreeY = this.getData().getAttachedTreeY();
@@ -1707,36 +1728,52 @@ public class IsoAnimal extends IsoPlayer implements IAnimalVisual {
     public void updateStatsAway(int hours) {
         this.fromMeta = false;
         if (!this.isWild()) {
-            this.zoneCheckTimer = 0.0F;
-            this.checkZone();
-            int age = this.getData().getAge();
-            int deltaAge = hours / 24;
-            deltaAge *= (int)this.getData().getAgeGrowModifier();
-            int newage = age + deltaAge;
-            this.setHoursSurvived(newage * 24);
-            this.getData().lastHourCheck = GameTime.getInstance().getHour();
-            this.getData().setAge(newage);
+            long now = GameTime.getInstance().getCalender().getTimeInMillis();
+            this.timeSinceLastUpdate = now - hours * HOUR_MS;
+            this.beginCatchUp();
             PZCalendar cal = PZCalendar.getInstance();
-            cal.setTimeInMillis(this.timeSinceLastUpdate);
 
             for (int i = 0; i < hours; i++) {
-                this.getData().hourGrow(true);
-                this.timeSinceLastUpdate += 3600000L;
-                cal.setTimeInMillis(this.timeSinceLastUpdate);
-                int realHour = cal.get(11);
-                this.getData().tryInseminateInMeta(cal);
-                if (realHour == 0) {
-                    this.getData().growUp(true);
-                }
-
-                this.getData().checkEggs(cal, true);
-                if (this.checkKilledByMetaPredator(realHour)) {
-                    return;
-                }
+                if (!this.catchUpHour(cal, false)) break;
             }
 
-            this.getData().init();
+            this.timeSinceLastUpdate = now;
+            this.endCatchUp();
         }
+    }
+
+    int getCatchUpHours(long until) {
+        if (this.timeSinceLastUpdate < 0L) {
+            this.timeSinceLastUpdate = until;
+            return 0;
+        }
+
+        return (int) Math.max(0L, (until - this.timeSinceLastUpdate) / HOUR_MS);
+    }
+
+    void beginCatchUp() {
+        this.fromMeta = false;
+        this.zoneCheckTimer = 0.0f;
+        this.checkZone();
+    }
+
+    boolean catchUpHour(PZCalendar cal, boolean sheltered) {
+        float mod = this.getData().getAgeGrowModifier();
+        this.setHoursSurvived(this.getHoursSurvived() + mod);
+        this.getData().setAge(Math.max(this.getData().getAge(), this.getData().getDaysSurvived()));
+        this.timeSinceLastUpdate += HOUR_MS;
+        cal.setTimeInMillis(this.timeSinceLastUpdate);
+        int hour = cal.get(Calendar.HOUR_OF_DAY);
+        this.getData().hourGrow(true, sheltered);
+        this.getData().tryInseminateInMeta(cal);
+        if (hour == 0) this.getData().growUp(true);
+        this.getData().checkEggs(cal, true);
+        return sheltered || !this.checkKilledByMetaPredator(hour);
+    }
+
+    void endCatchUp() {
+        this.getData().lastHourCheck = GameTime.getInstance().getHour();
+        this.pendingCatchUp = false;
     }
 
     public boolean checkKilledByMetaPredator(int hour) {
@@ -2592,7 +2629,7 @@ public class IsoAnimal extends IsoPlayer implements IAnimalVisual {
                         DebugType.DetailedInfo.trace("Animal id=%d lured by player \"%s\"", this.getOnlineID(), chr.getUsername());
                         chr.luredAnimals.add(this);
                         this.luredBy = chr;
-                        this.luredStartTimer = Rand.Next(100, 200);
+                                        this.luredStartTimer = Rand.Next(100, 200);
                         if (GameServer.server) {
                             GameServer.addXp(chr, PerkFactory.Perks.Husbandry, Rand.Next(5, 10));
                         } else if (!GameClient.client) {

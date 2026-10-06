@@ -2,7 +2,7 @@
 package zombie.characters.animals;
 
 import java.util.ArrayList;
-import zombie.GameTime;
+
 import zombie.characters.action.ActionGroup;
 import zombie.core.math.PZMath;
 import zombie.core.random.Rand;
@@ -12,7 +12,6 @@ import zombie.iso.IsoDirections;
 import zombie.iso.IsoGridSquare;
 import zombie.iso.IsoMovingObject;
 import zombie.iso.IsoWorld;
-import zombie.iso.areas.DesignationZone;
 import zombie.popman.animal.AnimalInstanceManager;
 import zombie.util.StringUtils;
 
@@ -101,9 +100,7 @@ public final class AnimalManagerMain {
                     isoAnimal.addToWorld();
                     isoAnimal.getActionContext().setGroup(ActionGroup.getActionGroup(isoAnimal.adef.animset));
                     isoAnimal.getAdvancedAnimator().OnAnimDataChanged(false);
-                    DesignationZone zone = isoAnimal.getZone();
-                    int hoursAway = zone == null ? 0 : (int)GameTime.getInstance().getWorldAgeHours() - zone.hourLastSeen;
-                    isoAnimal.updateStatsAway(hoursAway);
+                    AnimalCatchUp.add(isoAnimal);
                     assert !IsoWorld.instance.currentCell.getObjectList().contains(isoAnimal);
                     if (IsoWorld.instance.currentCell.getObjectList().contains(isoAnimal)) {
                         DebugType.Animal.error("Animal already in IsoCell.ObjectList.");

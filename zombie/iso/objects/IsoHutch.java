@@ -414,6 +414,7 @@ public class IsoHutch extends IsoObject {
                     }
 
                     animal.setHoursSurvived(animal.getHoursSurvived() + 1.0);
+                    animal.timeSinceLastUpdate = GameTime.getInstance().getCalender().getTimeInMillis();
                     animal.getData().updateHungerAndThirst(false);
                     if (!this.isDoorClosed()) {
                         animal.checkKilledByMetaPredator(GameTime.getInstance().getHour());

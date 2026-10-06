@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import zombie.GameTime;
 import zombie.GameWindow;
 import zombie.UsedFromLua;
+import zombie.characters.animals.AnimalCatchUp;
 import zombie.core.random.Rand;
 import zombie.iso.IsoGridSquare;
 import zombie.iso.IsoWorld;
@@ -170,7 +171,6 @@ public class DesignationZone {
     public void loading() {
         if (this.isFullyStreamed() && !this.streamed) {
             this.streamed = true;
-            this.doMeta((int)GameTime.getInstance().getWorldAgeHours() - this.hourLastSeen);
         }
     }
 
@@ -179,7 +179,6 @@ public class DesignationZone {
         IsoGridSquare sq2 = IsoWorld.instance.getCell().getGridSquare(this.x + this.w - 1, this.y + this.h - 1, this.z);
         if (sq != null && sq2 != null && !this.streamed) {
             this.streamed = true;
-            this.doMeta((int)GameTime.getInstance().getWorldAgeHours() - this.hourLastSeen);
         }
 
         if ((sq == null || sq2 == null) && this.streamed) {
@@ -234,6 +233,10 @@ public class DesignationZone {
             for (int i = 0; i < allZones.size(); i++) {
                 allZones.get(i).checkStreamed();
                 allZones.get(i).check();
+            }
+
+            if (!GameClient.client) {
+                AnimalCatchUp.update();
             }
         }
     }
@@ -303,6 +306,7 @@ public class DesignationZone {
 
     public static void Reset() {
         allZones.clear();
+        AnimalCatchUp.reset();
     }
 
     public Double getId() {

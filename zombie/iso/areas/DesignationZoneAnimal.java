@@ -9,16 +9,14 @@ import zombie.core.math.PZMath;
 import zombie.inventory.InventoryItem;
 import zombie.inventory.types.DrainableComboItem;
 import zombie.inventory.types.Food;
-import zombie.iso.IsoCell;
-import zombie.iso.IsoGridSquare;
-import zombie.iso.IsoMovingObject;
-import zombie.iso.IsoObject;
-import zombie.iso.IsoWorld;
+import zombie.iso.*;
 import zombie.iso.SpriteDetails.IsoFlagType;
 import zombie.iso.objects.IsoDeadBody;
 import zombie.iso.objects.IsoFeedingTrough;
 import zombie.iso.objects.IsoHutch;
 import zombie.iso.objects.IsoWorldInventoryObject;
+import zombie.network.GameServer;
+import zombie.network.ServerMap;
 import zombie.popman.ObjectPool;
 import zombie.scripting.objects.ItemTag;
 import zombie.util.StringUtils;
@@ -166,98 +164,102 @@ public final class DesignationZoneAnimal extends DesignationZone {
     @Override
     public void check() {
         if (this.isFullyStreamed()) {
-            if (IsoWorld.instance.currentCell == null) {
-                lastUpdate = 0L;
-            } else {
-                for (int i = this.animals.size() - 1; i >= 0; i--) {
-                    IsoAnimal animal = this.animals.get(i);
-                    animal.setDZone(null);
-                }
+            this.rebuild();
+        }
+    }
 
-                this.nearWaterSquares.clear();
-                this.animals.clear();
-                this.corpses.clear();
-                this.hutchs.clear();
-                this.foodOnGround.clear();
-                this.nbOfDung = 0;
-                this.nbOfFeather = 0;
-                this.position3dPool.releaseAll(this.roofAreas);
-                this.roofAreas.clear();
-                ArrayList<DesignationZoneAnimal> connectedDZone = new ArrayList<>();
-                getAllDZones(connectedDZone, this, null);
-                ArrayList<IsoAnimal> animalsOnSquare = new ArrayList<>();
-                IsoCell cell = IsoWorld.instance.currentCell;
+    public void rebuild() {
+        if (IsoWorld.instance.currentCell == null) {
+            lastUpdate = 0L;
+        } else {
+            for (int i = this.animals.size() - 1; i >= 0; i--) {
+                IsoAnimal animal = this.animals.get(i);
+                animal.setDZone(null);
+            }
 
-                for (int checkX = this.x; checkX < this.x + this.w; checkX++) {
-                    for (int checkY = this.y; checkY < this.y + this.h; checkY++) {
-                        IsoGridSquare sq = cell.getGridSquare(checkX, checkY, this.z);
-                        if (sq != null) {
-                            if (sq.haveRoof) {
-                                this.roofAreas.add(this.position3dPool.alloc().set(checkX, checkY, this.z));
+            this.nearWaterSquares.clear();
+            this.animals.clear();
+            this.corpses.clear();
+            this.hutchs.clear();
+            this.foodOnGround.clear();
+            this.nbOfDung = 0;
+            this.nbOfFeather = 0;
+            this.position3dPool.releaseAll(this.roofAreas);
+            this.roofAreas.clear();
+            ArrayList<DesignationZoneAnimal> connectedDZone = new ArrayList<>();
+            getAllDZones(connectedDZone, this, null);
+            ArrayList<IsoAnimal> animalsOnSquare = new ArrayList<>();
+            IsoCell cell = IsoWorld.instance.currentCell;
+
+            for (int checkX = this.x; checkX < this.x + this.w; checkX++) {
+                for (int checkY = this.y; checkY < this.y + this.h; checkY++) {
+                    IsoGridSquare sq = cell.getGridSquare(checkX, checkY, this.z);
+                    if (sq != null) {
+                        if (sq.haveRoof) {
+                            this.roofAreas.add(this.position3dPool.alloc().set(checkX, checkY, this.z));
+                        }
+
+                        sq.getAnimals(animalsOnSquare);
+
+                        for (int i = 0; i < animalsOnSquare.size(); i++) {
+                            IsoAnimal animal = animalsOnSquare.get(i);
+                            animal.setDZone(this);
+                            animal.getConnectedDZone().clear();
+                            animal.getConnectedDZone().addAll(connectedDZone);
+                        }
+
+                        for (int i = 0; i < sq.getObjects().size(); i++) {
+                            IsoObject obj = sq.getObjects().get(i);
+                            if (obj instanceof IsoWorldInventoryObject worldObj) {
+                                if (isItemFood(worldObj)) {
+                                    this.addFoodOnGround(worldObj);
+                                }
+
+                                if (isItemDung(worldObj)) {
+                                    this.nbOfDung++;
+                                }
+
+                                if (isItemFeather(worldObj)) {
+                                    this.nbOfFeather++;
+                                }
                             }
 
-                            sq.getAnimals(animalsOnSquare);
-
-                            for (int i = 0; i < animalsOnSquare.size(); i++) {
-                                IsoAnimal animal = animalsOnSquare.get(i);
-                                animal.setDZone(this);
-                                animal.getConnectedDZone().clear();
-                                animal.getConnectedDZone().addAll(connectedDZone);
+                            if (obj instanceof IsoFeedingTrough trough && trough.getLinkedY() == 0 && !this.troughs.contains(trough)) {
+                                this.troughs.add(trough);
                             }
 
-                            for (int i = 0; i < sq.getObjects().size(); i++) {
-                                IsoObject obj = sq.getObjects().get(i);
-                                if (obj instanceof IsoWorldInventoryObject worldObj) {
-                                    if (isItemFood(worldObj)) {
-                                        this.addFoodOnGround(worldObj);
-                                    }
+                            if (obj instanceof IsoHutch hutch && !hutch.isSlave() && !this.hutchs.contains(hutch)) {
+                                this.hutchs.add(hutch);
+                                hutch.reforceUpdate();
+                            }
 
-                                    if (isItemDung(worldObj)) {
-                                        this.nbOfDung++;
-                                    }
-
-                                    if (isItemFeather(worldObj)) {
-                                        this.nbOfFeather++;
-                                    }
-                                }
-
-                                if (obj instanceof IsoFeedingTrough trough && trough.getLinkedY() == 0 && !this.troughs.contains(trough)) {
-                                    this.troughs.add(trough);
-                                }
-
-                                if (obj instanceof IsoHutch hutch && !hutch.isSlave() && !this.hutchs.contains(hutch)) {
-                                    this.hutchs.add(hutch);
-                                    hutch.reforceUpdate();
-                                }
-
-                                if (obj.getProperties() != null && obj.getProperties().has(IsoFlagType.water)) {
-                                    for (int x2 = sq.getX() - 1; x2 < sq.getX() + 2; x2++) {
-                                        for (int y2 = sq.getY() - 1; y2 < sq.getY() + 2; y2++) {
-                                            IsoGridSquare sq2 = cell.getGridSquare(x2, y2, sq.z);
-                                            if (sq2 != null
+                            if (obj.getProperties() != null && obj.getProperties().has(IsoFlagType.water)) {
+                                for (int x2 = sq.getX() - 1; x2 < sq.getX() + 2; x2++) {
+                                    for (int y2 = sq.getY() - 1; y2 < sq.getY() + 2; y2++) {
+                                        IsoGridSquare sq2 = cell.getGridSquare(x2, y2, sq.z);
+                                        if (sq2 != null
                                                 && sq2.isFree(false)
                                                 && !this.nearWaterSquares.contains(sq2)
                                                 && getZone(sq2.getX(), sq2.getY(), sq2.getZ()) == this) {
-                                                this.nearWaterSquares.add(sq2);
-                                            }
+                                            this.nearWaterSquares.add(sq2);
                                         }
                                     }
                                 }
                             }
+                        }
 
-                            for (int i = 0; i < sq.getStaticMovingObjects().size(); i++) {
-                                IsoMovingObject obj = sq.getStaticMovingObjects().get(i);
-                                if (obj instanceof IsoDeadBody corpse && corpse.isAnimal()) {
-                                    this.corpses.add(corpse);
-                                }
+                        for (int i = 0; i < sq.getStaticMovingObjects().size(); i++) {
+                            IsoMovingObject obj = sq.getStaticMovingObjects().get(i);
+                            if (obj instanceof IsoDeadBody corpse && corpse.isAnimal()) {
+                                this.corpses.add(corpse);
                             }
                         }
                     }
                 }
-
-                animalsOnSquare.clear();
-                this.reAttachAnimal();
             }
+
+            animalsOnSquare.clear();
+            this.reAttachAnimal();
         }
     }
 
@@ -280,34 +282,6 @@ public final class DesignationZoneAnimal extends DesignationZone {
                     this.hutchs.get(i).animalOutside.add(this.animals.get(j));
                 }
             }
-        }
-    }
-
-    @Override
-    public void doMeta(int hours) {
-        this.check();
-
-        for (int i = 0; i < this.animals.size(); i++) {
-            IsoAnimal animal = this.animals.get(i);
-            if (!animal.isBaby()) {
-                this.animals.get(i).updateStatsAway(hours);
-            }
-        }
-
-        for (int i = 0; i < this.animals.size(); i++) {
-            IsoAnimal animal = this.animals.get(i);
-            if (animal.isBaby()) {
-                this.animals.get(i).updateStatsAway(hours);
-            }
-        }
-
-        for (int i = 0; i < this.hutchs.size(); i++) {
-            this.hutchs.get(i).doMeta(hours);
-        }
-
-        for (int i = 0; i < this.animals.size(); i++) {
-            IsoAnimal animal = this.animals.get(i);
-            animal.forceWanderNow();
         }
     }
 
@@ -552,5 +526,16 @@ public final class DesignationZoneAnimal extends DesignationZone {
 
     public int getNbOfFeather() {
         return this.nbOfFeather;
+    }
+
+    public boolean isAllChunksLoaded() {
+        for (int wx = this.x >> 3; wx <= this.x + this.w - 1 >> 3; wx++) {
+            for (int wy = this.y >> 3; wy <= this.y + this.h - 1 >> 3; wy++) {
+                IsoChunk chunk = GameServer.server ? ServerMap.instance.getChunk(wx, wy) : IsoWorld.instance.getCell().getChunk(wx, wy);
+                if (chunk == null) return false;
+            }
+        }
+
+        return true;
     }
 }
