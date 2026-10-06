@@ -1425,6 +1425,9 @@ public class AnimalData {
         AnimalGene.checkGeneticDisorder(newAnimal);
         newAnimal.getData().initSize();
         newAnimal.setCustomName(this.parent.getCustomName());
+        if (this.parent.hasModData() && this.parent.getModData().rawget(IsoAnimal.HOME_ZONE_KEY) != null) {
+            newAnimal.getModData().rawset(IsoAnimal.HOME_ZONE_KEY, this.parent.getModData().rawget(IsoAnimal.HOME_ZONE_KEY));
+        }
         newAnimal.setFemale(this.parent.isFemale());
         newAnimal.setVehicle(this.parent.getVehicle());
         newAnimal.setAnimalID(this.parent.getAnimalID());
@@ -1486,6 +1489,9 @@ public class AnimalData {
     }
 
     public void setAttachedPlayer(IsoPlayer chr) {
+        if (chr != null) {
+            this.parent.clearHomeZone();
+        }
         if (chr != null && (Core.getInstance().animalCheat || chr.getInventory().getFirstType("Rope") != null)) {
             chr.setPrimaryHandItem(chr.getInventory().getFirstType("Rope"));
         }

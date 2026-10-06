@@ -195,6 +195,7 @@ public class IsoAnimal extends IsoPlayer implements IAnimalVisual {
     public boolean fromMeta;
     public boolean pendingCatchUp;
     public long pendingSince;
+    public static final String HOME_ZONE_KEY = "ZMHomeZone";
     private float thumpDelay = 20000.0F;
     private boolean shouldBeSkeleton;
     private ArrayList<IsoAnimal> babies;
@@ -635,8 +636,35 @@ public class IsoAnimal extends IsoPlayer implements IAnimalVisual {
             if (!this.connectedDZone.isEmpty()) {
                 this.setWild(false);
             }
+            if (this.dZone != null && !this.isBeingLed()) {
+                this.setHomeZone(this.dZone);
+            }
 
             this.updateZoneAcceptance();
+        }
+    }
+
+    public boolean isBeingLed() {
+        return this.heldBy != null || this.luredBy != null || this.getData().getAttachedPlayer() != null || this.getVehicle() != null;
+    }
+
+    public DesignationZoneAnimal getHomeZone() {
+        if (!this.hasModData()) {
+            return null;
+        }
+
+        return this.getModData().rawget(HOME_ZONE_KEY) instanceof Double id ? DesignationZoneAnimal.getZoneById(id.doubleValue()) : null;
+    }
+
+    private void setHomeZone(DesignationZoneAnimal zone) {
+        if (!zone.getId().equals(this.getModData().rawget(HOME_ZONE_KEY))) {
+            this.getModData().rawset(HOME_ZONE_KEY, zone.getId());
+        }
+    }
+
+    public void clearHomeZone() {
+        if (this.hasModData()) {
+            this.getModData().rawset(HOME_ZONE_KEY, null);
         }
     }
 
@@ -2154,6 +2182,7 @@ public class IsoAnimal extends IsoPlayer implements IAnimalVisual {
 
     public void copyFrom(IsoAnimal animal) {
         LuaManager.copyTable(this.getModData(), animal.getModData());
+        this.clearHomeZone();
         this.setHoursSurvived(animal.getHoursSurvived());
         this.getStats().set(CharacterStat.HUNGER, animal.getStats().get(CharacterStat.HUNGER));
         this.getStats().set(CharacterStat.THIRST, animal.getStats().get(CharacterStat.THIRST));
@@ -2629,7 +2658,8 @@ public class IsoAnimal extends IsoPlayer implements IAnimalVisual {
                         DebugType.DetailedInfo.trace("Animal id=%d lured by player \"%s\"", this.getOnlineID(), chr.getUsername());
                         chr.luredAnimals.add(this);
                         this.luredBy = chr;
-                                        this.luredStartTimer = Rand.Next(100, 200);
+                        this.clearHomeZone();
+                        this.luredStartTimer = Rand.Next(100, 200);
                         if (GameServer.server) {
                             GameServer.addXp(chr, PerkFactory.Perks.Husbandry, Rand.Next(5, 10));
                         } else if (!GameClient.client) {
@@ -2953,6 +2983,7 @@ public class IsoAnimal extends IsoPlayer implements IAnimalVisual {
             this.ignoredTrough.add(isoFeedingTrough);
         }
 
+        this.getBehavior().onPathFailed(this.getPathTargetX(), this.getPathTargetY(), this.getPathTargetZ());
         this.stopAllMovementNow();
     }
 

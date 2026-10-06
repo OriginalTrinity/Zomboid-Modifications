@@ -66,6 +66,12 @@ public class BaseAnimalBehavior {
     private float timerFleeAgain;
     private boolean wildAndHurt;
     private float wildDropDeadTimer;
+    private boolean returningHome;
+    private int returnHomeFails;
+    private int returnHomeX;
+    private int returnHomeY;
+    private int returnHomeZ;
+    private double returnHomeRetryHour;
 
     public BaseAnimalBehavior(IsoAnimal parent) {
         this.parent = parent;
@@ -185,17 +191,24 @@ public class BaseAnimalBehavior {
                             this.parent.setStateEventDelayTimer(200.0F);
                         }
 
+                        if (this.parent.getDZone() == null) {
+                            if (this.tryReturnHome()) return;
+                        } else {
+                            this.returningHome = false;
+                            this.returnHomeFails = 0;
+                        }
+
                         int x = xRef + Rand.Next(16) - 8;
                         int y = yRef + Rand.Next(16) - 8;
                         if (this.parent.getDZone() != null
                             && this.parent.getStats().get(CharacterStat.HUNGER) < 0.9F
                             && this.parent.getStats().get(CharacterStat.THIRST) < 0.9F) {
-                            DesignationZoneAnimal zone = DesignationZoneAnimal.getZone(x, y, this.parent.getCurrentSquare().getZ());
+                            boolean inside = this.isInOwnZone(x, y);
 
-                            for (int tries = 0; zone == null && tries < 100; tries++) {
+                            for (int tries = 0; !inside && tries < 100; tries++) {
                                 x = xRef + Rand.Next(16) - 8;
                                 y = yRef + Rand.Next(16) - 8;
-                                zone = DesignationZoneAnimal.getZone(x, y, this.parent.getCurrentSquare().getZ());
+                                inside = this.isInOwnZone(x, y);
                             }
 
                             if (RainManager.isRaining() && RainManager.getRainIntensity() > 0.05) {
@@ -213,8 +226,11 @@ public class BaseAnimalBehavior {
                                     Position3D pos = zoneRoof.getRoofAreas().get(Rand.Next(0, zoneRoof.getRoofAreas().size()));
                                     x = (int)pos.x;
                                     y = (int)pos.y;
+                                    inside = true;
                                 }
                             }
+
+                            if (!inside) return;
                         }
 
                         if (this.parent.getCell().getGridSquare(x, y, this.parent.getZi()) != null
@@ -227,6 +243,73 @@ public class BaseAnimalBehavior {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    private boolean isInOwnZone(int x, int y) {
+        DesignationZoneAnimal zone = DesignationZoneAnimal.getZone(x, y, this.parent.getZi());
+        return zone != null && this.parent.getConnectedDZone().contains(zone);
+    }
+    private boolean tryReturnHome() {
+        IsoAnimal animal = this.parent;
+        if (animal.getCurrentSquare() == null
+                || animal.isWild()
+                || animal.isOnHook()
+                || animal.isBeingLed()
+                || animal.getData().getAttachedTree() != null
+                || animal.getAttackedBy() != null
+                || animal.stressLevel >= 60.0F
+                || animal.getStats().get(CharacterStat.HUNGER) >= 0.9F
+                || animal.getStats().get(CharacterStat.THIRST) >= 0.9F
+                || GameTime.getInstance().getWorldAgeHours() < this.returnHomeRetryHour) {
+            return false;
+        }
+
+        DesignationZoneAnimal home = animal.getHomeZone();
+        IsoAnimal mother = animal.mother;
+        if (mother != null && mother.isExistInTheWorld() && !mother.isDead() && !mother.isOnHook()) {
+            // babies stay with their mother: walk to her enclosure, or follow her (vanilla) while she isn't in one
+            home = mother.getDZone();
+        }
+
+        if (home == null) return false;
+
+        IsoGridSquare target = getRandomFreeSquare(DesignationZoneAnimal.getAllDZones(null, home, null), animal.getCurrentSquare());
+        if (target == null) return false;
+        this.returningHome = true;
+        this.returnHomeX = target.getX();
+        this.returnHomeY = target.getY();
+        this.returnHomeZ = target.getZ();
+        animal.pathToLocation(target.getX(), target.getY(), target.getZ());
+        return true;
+    }
+
+    private static IsoGridSquare getRandomFreeSquare(ArrayList<DesignationZoneAnimal> zones, IsoGridSquare from) {
+        if (zones.isEmpty()) {
+            return null;
+        }
+
+        for (int i = 0; i < 20; i++) {
+            DesignationZoneAnimal zone = zones.get(Rand.Next(zones.size()));
+            int x = zone.getX() + Rand.Next(Math.max(1, zone.getW()));
+            int y = zone.getY() + Rand.Next(Math.max(1, zone.getH()));
+            IsoGridSquare sq = from.getCell().getGridSquare(x, y, zone.getZ());
+            if (sq != null && sq.isFree(false) && sq.DistToProper(from) <= 60.0F) {
+                return sq;
+            }
+        }
+
+        return null;
+    }
+
+    // only the walk home counts: fleeing, luring or other paths can fail while returningHome is still set
+    public void onPathFailed(int x, int y, int z) {
+        if (this.returningHome && Math.abs(x - this.returnHomeX) <= 1 && Math.abs(y - this.returnHomeY) <= 1 && z == this.returnHomeZ) {
+            this.returningHome = false;
+            if (++this.returnHomeFails >= 3) {
+                this.returnHomeFails = 0;
+                this.returnHomeRetryHour = GameTime.getInstance().getWorldAgeHours() + 1;
             }
         }
     }
