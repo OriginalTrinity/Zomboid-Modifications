@@ -19,6 +19,7 @@ import zombie.SystemDisabler;
 import zombie.UsedFromLua;
 import zombie.Lua.LuaManager;
 import zombie.characters.animals.IsoAnimal;
+import zombie.core.math.PZMath;
 import zombie.core.network.ByteBufferReader;
 import zombie.core.network.ByteBufferWriter;
 import zombie.core.random.Rand;
@@ -63,6 +64,7 @@ public class IsoHutch extends IsoObject {
     private int enterSpotX;
     private int enterSpotY;
     private int maxAnimals;
+    private static final String DIRT_HOUR_KEY = "ZMDirtHour";
     private int maxNestBox;
     private final HashMap<Integer, IsoHutch.NestBox> nestBoxes = new HashMap<>();
     private float nestBoxDirt;
@@ -274,6 +276,7 @@ public class IsoHutch extends IsoObject {
                 if (GameTime.getInstance().getHour() != this.lastHourCheck) {
                     this.lastHourCheck = GameTime.getInstance().getHour();
                     hourGrow = true;
+                    this.catchUpDirt();
                 }
 
                 int prob = 8000 - this.animalInside.size() * 100;
@@ -435,20 +438,35 @@ public class IsoHutch extends IsoObject {
         }
     }
 
+    // Dirt for the hours the hutch was unloaded, applied once when it updates again. modData holds the world hour of
+    // the last live update (vanilla added dirt per zone streaming, also for hutches that never unloaded). Like vanilla,
+    // only hutches in livestock zones.
+    private void catchUpDirt() {
+        int hour = (int)GameTime.getInstance().getWorldAgeHours();
+        if (this.getModData().rawget(DIRT_HOUR_KEY) instanceof Double last
+            && hour - last.intValue() > 1
+            && DesignationZoneAnimal.getZoneF(this.getX(), this.getY(), this.getZ()) != null) {
+            this.doMeta(hour - last.intValue() - 1);
+            this.sync();
+        }
+
+        this.getModData().rawset(DIRT_HOUR_KEY, (double)hour);
+    }
+
     public void doMeta(int hours) {
         for (int i = 0; i < hours; i++) {
-            int prob = 25 - (this.animalInside.size() + this.animalOutside.size());
-            if (prob > 10) {
-                prob = 10;
-            }
+            this.doMetaHour();
+        }
+    }
 
-            if (Rand.NextBool(prob)) {
-                this.hutchDirt = Math.min(this.hutchDirt + 1.0F, 100.0F);
-            }
+    public void doMetaHour() {
+        int prob = PZMath.clamp(25 - (this.animalInside.size() + this.animalOutside.size()), 1, 10);
+        if (Rand.NextBool(prob)) {
+            this.hutchDirt = Math.min(this.hutchDirt + 1.0F, 100.0F);
+        }
 
-            if (Rand.NextBool(prob)) {
-                this.nestBoxDirt = Math.min(this.nestBoxDirt + 1.0F, 100.0F);
-            }
+        if (Rand.NextBool(prob)) {
+            this.nestBoxDirt = Math.min(this.nestBoxDirt + 1.0F, 100.0F);
         }
     }
 
