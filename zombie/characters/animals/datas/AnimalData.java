@@ -1031,7 +1031,9 @@ public class AnimalData {
         } else if (this.parent.drinkFromTrough != null && !(this.parent.drinkFromTrough.getWater() <= 0.0F)) {
             this.parent.drinkFromTrough.removeWater(Rand.Next(0.4F, 0.6F) / this.parent.adef.thirstBoost);
             this.parent.getStats().remove(CharacterStat.THIRST, 0.2F * this.parent.adef.thirstBoost);
-            SGlobalObjects.OnIsoObjectChangedItself("feedingTrough", this.parent.drinkFromTrough);
+            if (!AnimalCatchUp.isRunning()) {
+                SGlobalObjects.OnIsoObjectChangedItself("feedingTrough", this.parent.drinkFromTrough);
+            }
             if (!(this.parent.getStats().get(CharacterStat.THIRST) < 0.1F) && !(this.parent.drinkFromTrough.getWater() <= 0.0F)) {
                 if (this.parent.getStats().get(CharacterStat.THIRST) > 0.1F) {
                     this.parent.setVariable("idleAction", "eat");

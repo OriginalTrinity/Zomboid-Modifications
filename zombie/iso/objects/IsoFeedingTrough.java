@@ -8,13 +8,17 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Objects;
 import java.util.Set;
+
+import org.jetbrains.annotations.Nullable;
 import se.krka.kahlua.j2se.KahluaTableImpl;
 import se.krka.kahlua.vm.KahluaTable;
 import se.krka.kahlua.vm.KahluaTableIterator;
+import zombie.GameTime;
 import zombie.GameWindow;
 import zombie.UsedFromLua;
 import zombie.Lua.LuaEventManager;
 import zombie.Lua.LuaManager;
+import zombie.characters.animals.AnimalCatchUp;
 import zombie.characters.animals.IsoAnimal;
 import zombie.core.math.PZMath;
 import zombie.core.properties.IsoPropertyType;
@@ -36,6 +40,7 @@ import zombie.iso.IsoObjectUtils;
 import zombie.iso.IsoWorld;
 import zombie.iso.areas.DesignationZoneAnimal;
 import zombie.iso.sprite.IsoSpriteGrid;
+import zombie.network.GameClient;
 import zombie.network.GameServer;
 import zombie.util.StringUtils;
 
@@ -50,6 +55,9 @@ public final class IsoFeedingTrough extends IsoObject {
     private float maxWater;
     private KahluaTableImpl def;
     public boolean north;
+    private static final String WATER_LEVEL_KEY = "ZMWaterLevel";
+    private static final String WATER_HOUR_KEY = "ZMWaterHour";
+    private int lastWaterRecordHour = -1;
 
     public IsoFeedingTrough(IsoCell cell) {
         super(cell);
@@ -157,6 +165,7 @@ public final class IsoFeedingTrough extends IsoObject {
         this.checkWaterFromRain();
         this.checkContainer();
         this.checkIsoRegion();
+        this.recordWaterLevel();
     }
 
     public void checkWaterFromRain() {
@@ -508,6 +517,10 @@ public final class IsoFeedingTrough extends IsoObject {
 
     public void removeFluidContainer() {
         GameEntityFactory.RemoveComponent(this, this.getFluidContainer());
+        if (this.hasModData()) {
+            this.getModData().rawset(WATER_LEVEL_KEY, null);
+            this.getModData().rawset(WATER_HOUR_KEY, null);
+        }
     }
 
     @Override
@@ -540,5 +553,39 @@ public final class IsoFeedingTrough extends IsoObject {
             square.addAshes();
             square.BurnWalls(true, false);
         }
+    }
+
+    private void recordWaterLevel() {
+        if (GameClient.client || this.isSlave() || this.getFluidContainer() == null) return;
+        int hour = (int) GameTime.getInstance().getWorldAgeHours();
+        if (this.lastWaterRecordHour == -1) {
+            this.lastWaterRecordHour = hour;
+            return;
+        }
+
+        if (hour == this.lastWaterRecordHour) return;
+
+        DesignationZoneAnimal zone = DesignationZoneAnimal.getZoneF(this.getX(), this.getY(), this.getZ());
+        if (zone != null && AnimalCatchUp.hasPendingIn(zone)) return;
+
+        this.lastWaterRecordHour = hour;
+        this.writeWaterLevel();
+    }
+
+    public void writeWaterLevel() {
+        if (this.getFluidContainer() == null) return;
+
+        this.getModData().rawset(WATER_LEVEL_KEY, (double) this.getWater());
+        this.getModData().rawset(WATER_HOUR_KEY, GameTime.getInstance().getWorldAgeHours());
+    }
+
+    @Nullable
+    public Double getRecordedWaterLevel() {
+        return this.hasModData() && this.getModData().rawget(WATER_LEVEL_KEY) instanceof Double level ? level : null;
+    }
+
+    @Nullable
+    public Double getRecordedWaterHour() {
+        return this.hasModData() && this.getModData().rawget(WATER_HOUR_KEY) instanceof Double hour ? hour : null;
     }
 }

@@ -8,6 +8,7 @@ import zombie.iso.IsoGridSquare;
 import zombie.iso.IsoPuddles;
 import zombie.iso.IsoWorld;
 import zombie.iso.areas.DesignationZoneAnimal;
+import zombie.iso.objects.IsoFeedingTrough;
 import zombie.iso.objects.IsoHutch;
 import zombie.network.GameClient;
 import zombie.util.PZCalendar;
@@ -24,6 +25,7 @@ public class AnimalCatchUp {
     private static final ArrayList<IsoAnimal> pending = new ArrayList<>();
     private static final ArrayList<IsoGridSquare> grass = new ArrayList<>();
     private static boolean running;
+    private static boolean puddles;
 
     private AnimalCatchUp() {}
 
@@ -53,7 +55,7 @@ public class AnimalCatchUp {
     }
 
     public static boolean hasPuddles() {
-        return IsoPuddles.getInstance().getPuddlesSize() > 0.13F;
+        return running ? puddles : IsoPuddles.getInstance().getPuddlesSize() > 0.13F;
     }
 
     public static IsoGridSquare pollGrass() {
@@ -153,6 +155,9 @@ public class AnimalCatchUp {
 
     private static void run(ArrayList<DesignationZoneAnimal> enclosure, ArrayList<IsoAnimal> animals) {
         ArrayList<IsoAnimal> order = new ArrayList<>();
+        ArrayList<IsoFeedingTrough> troughs = new ArrayList<>();
+        boolean waterStarted = false;
+        boolean completed = false;
 
         // the animals are out of `pending` already: whatever throws below, the finally must end or release them
         try {
@@ -195,8 +200,12 @@ public class AnimalCatchUp {
 
             ArrayList<IsoHutch> hutches = new ArrayList<>();
 
-            // overlapping zones list the same hutch twice
+            // overlapping zones list the same trough or hutch twice; CatchUpWater would lower such a trough twice
             for (DesignationZoneAnimal zone : enclosure) {
+                for (IsoFeedingTrough trough : zone.getTroughs()) {
+                    if (!troughs.contains(trough)) troughs.add(trough);
+                }
+
                 for (IsoHutch hutch : zone.getHutchs()) {
                     if (!hutches.contains(hutch)) hutches.add(hutch);
                 }
@@ -208,12 +217,16 @@ public class AnimalCatchUp {
             PZCalendar animalCal = PZCalendar.getInstance();
             running = true;
             collectGrass(enclosure);
+            waterStarted = true;
+            CatchUpWater.begin(troughs, start, now, worldAgeNow);
 
             for (int h = 0; h < maxHours; h++) {
                 long hourStart = start + h * IsoAnimal.HOUR_MS;
                 double worldAgeHour = worldAgeNow - (double) (now - hourStart) / IsoAnimal.HOUR_MS;
                 hourCal.setTimeInMillis(hourStart);
                 int hourOfDay = hourCal.get(Calendar.HOUR_OF_DAY);
+                CatchUpWater.addRain(troughs, hourStart, worldAgeHour);
+                puddles = CatchUpWater.hasPuddles(worldAgeHour);
                 Collections.shuffle(order);
                 order.sort(ADULTS_FIRST);
                 HashMap<IsoHutch, Integer> hutchRoom = new HashMap<>();
@@ -226,8 +239,10 @@ public class AnimalCatchUp {
                 }
             }
 
+            completed = true;
         } finally {
             running = false;
+            puddles = false;
             grass.clear();
 
             // pendingCatchUp is only still set after an exception (or for the animals in `order`): end them so the clock
@@ -236,6 +251,14 @@ public class AnimalCatchUp {
                 if (animal.pendingCatchUp) {
                     animal.endCatchUp();
                     animal.fromMeta = false;
+                }
+            }
+
+            if (waterStarted) {
+                try {
+                    CatchUpWater.end(troughs, !completed);
+                } catch (Exception e) {
+                    ExceptionLogger.logException(e);   // don't hide an exception from the catch-up itself
                 }
             }
         }
