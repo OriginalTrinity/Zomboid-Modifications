@@ -57,6 +57,9 @@ public class CatchUpWater {
             float caught = Math.max(0.0f, level - startLevel);
             float budget = level < capacity ? caught : Math.max(caught, rain);
             rainFrom.put(trough, new TroughRain(from, budget));
+            AnimalCatchUp.log("trough-begin trough=%d,%d,%d level=%.2f capacity=%.2f recorded=%b rainHours=%d rain=%.2f start=%.2f budget=%.2f",
+                trough.getXi(), trough.getYi(), trough.getZi(), level, fluidContainer.getCapacity(), recordedLevel != null && recordedHour != null,
+                (now - Math.max(start, from) + IsoAnimal.HOUR_MS - 1) / IsoAnimal.HOUR_MS, rain, startLevel, budget);
         }
     }
 
@@ -86,6 +89,12 @@ public class CatchUpWater {
     static void end(ArrayList<IsoFeedingTrough> troughs, boolean aborted) {
         for (IsoFeedingTrough trough : troughs) {
             if (aborted) restoreRemaining(trough);
+            TroughRain troughRain = rainFrom.get(trough);
+            if (troughRain != null && trough.getFluidContainer() != null) {
+                AnimalCatchUp.log("trough-end trough=%d,%d,%d level=%.2f capacity=%.2f budgetLeft=%.2f aborted=%b", trough.getXi(),
+                    trough.getYi(), trough.getZi(), trough.getFluidContainer().getAmount(), trough.getFluidContainer().getCapacity(),
+                    troughRain.budget, aborted);
+            }
             trough.checkOverlayAfterAnimalEat();
             trough.writeWaterLevel();   // the next absence starts from the level after this catch-up
             trough.updateLuaObject();

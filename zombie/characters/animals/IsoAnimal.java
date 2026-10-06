@@ -1710,6 +1710,11 @@ public class IsoAnimal extends IsoPlayer implements IAnimalVisual {
         // old is stale (e.g. an animal that left AnimalCatchUp's queue and came back): reset it.
         long now = GameTime.getInstance().getCalender().getTimeInMillis();
         if (!this.pendingCatchUp && (this.timeSinceLastUpdate < 0L || this.timeSinceLastUpdate < now - 2 * HOUR_MS)) {
+            if (this.timeSinceLastUpdate >= 0L) {
+                AnimalCatchUp.log("clock-stale id=%d type=%s ageHours=%.2f", this.getAnimalID(), this.getAnimalType(),
+                    (double) (now - this.timeSinceLastUpdate) / HOUR_MS);
+            }
+
             this.timeSinceLastUpdate = now;
         }
         if (this.getData().getAttachedTree() != null) {

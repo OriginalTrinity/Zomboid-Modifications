@@ -7,6 +7,7 @@ import java.util.Random;
 import zombie.GameTime;
 import zombie.UsedFromLua;
 import zombie.ai.states.animals.AnimalIdleState;
+import zombie.characters.animals.AnimalCatchUp;
 import zombie.characters.CharacterStat;
 import zombie.characters.IsoGameCharacter;
 import zombie.characters.IsoPlayer;
@@ -194,6 +195,11 @@ public class BaseAnimalBehavior {
                         if (this.parent.getDZone() == null) {
                             if (this.tryReturnHome()) return;
                         } else {
+                            if (this.returningHome) {
+                                AnimalCatchUp.log("home-arrived id=%d type=%s zone=%.0f", this.parent.getAnimalID(), this.parent.getAnimalType(),
+                                    this.parent.getDZone().getId());
+                            }
+
                             this.returningHome = false;
                             this.returnHomeFails = 0;
                         }
@@ -281,6 +287,9 @@ public class BaseAnimalBehavior {
         this.returnHomeX = target.getX();
         this.returnHomeY = target.getY();
         this.returnHomeZ = target.getZ();
+        AnimalCatchUp.log("home-walk id=%d type=%s from=%d,%d,%d target=%d,%d,%d home=%.0f motherZone=%b", animal.getAnimalID(),
+            animal.getAnimalType(), animal.getCurrentSquare().getX(), animal.getCurrentSquare().getY(), animal.getCurrentSquare().getZ(),
+            target.getX(), target.getY(), target.getZ(), home.getId(), home != animal.getHomeZone());
         animal.pathToLocation(target.getX(), target.getY(), target.getZ());
         return true;
     }
@@ -307,7 +316,10 @@ public class BaseAnimalBehavior {
     public void onPathFailed(int x, int y, int z) {
         if (this.returningHome && Math.abs(x - this.returnHomeX) <= 1 && Math.abs(y - this.returnHomeY) <= 1 && z == this.returnHomeZ) {
             this.returningHome = false;
-            if (++this.returnHomeFails >= 3) {
+            boolean backoff = ++this.returnHomeFails >= 3;
+            AnimalCatchUp.log("home-fail id=%d type=%s target=%d,%d,%d fails=%d backoff=%b", this.parent.getAnimalID(), this.parent.getAnimalType(),
+                this.returnHomeX, this.returnHomeY, this.returnHomeZ, this.returnHomeFails, backoff);
+            if (backoff) {
                 this.returnHomeFails = 0;
                 this.returnHomeRetryHour = GameTime.getInstance().getWorldAgeHours() + 1;
             }

@@ -3,6 +3,7 @@ package zombie.characters.animals;
 import zombie.GameTime;
 import zombie.core.logger.ExceptionLogger;
 import zombie.core.random.Rand;
+import zombie.debug.DebugType;
 import zombie.iso.IsoCell;
 import zombie.iso.IsoGridSquare;
 import zombie.iso.IsoPuddles;
@@ -19,6 +20,7 @@ import java.util.Calendar;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.Locale;
 
 public class AnimalCatchUp {
     private static final long ENCLOSURE_WAIT = 10000L;
@@ -27,12 +29,20 @@ public class AnimalCatchUp {
     private static final ArrayList<IsoGridSquare> grass = new ArrayList<>();
     private static boolean running;
     private static boolean puddles;
+    private static int grassEaten;
 
     private AnimalCatchUp() {}
+
+    // Test log for the animal changes (catch-up, trough water, regrowth, home pasture, hutch dirt): one line per event,
+    // "[Animals] <event> key=value ...", formatted with Locale.ROOT so it can be parsed from console.txt.
+    public static void log(String format, Object... params) {
+        DebugType.General.println("[Animals] " + String.format(Locale.ROOT, format, params));
+    }
 
     public static void add(IsoAnimal animal) {
         // wild animals and animals outside zones get no catch-up (as vanilla), so don't keep them frozen
         if (animal.isWild() || DesignationZoneAnimal.getZoneF(animal.getX(), animal.getY(), animal.getZ()) == null) {
+            log("release id=%d type=%s reason=%s", animal.getAnimalID(), animal.getAnimalType(), animal.isWild() ? "wild" : "nozone");
             release(animal);
             return;
         }
@@ -66,6 +76,7 @@ public class AnimalCatchUp {
             grass.set(index, grass.getLast());
             grass.removeLast();
             if (square.checkHaveGrass()) {
+                grassEaten++;
                 return square;
             }
         }
@@ -98,6 +109,7 @@ public class AnimalCatchUp {
 
             IsoAnimal animal = pending.get(i);
             if (!animal.pendingCatchUp || !animal.isExistInTheWorld()) {
+                log("dropped id=%d type=%s clock=%d", animal.getAnimalID(), animal.getAnimalType(), animal.timeSinceLastUpdate);
                 pending.remove(i);
                 animal.pendingCatchUp = false;
                 animal.fromMeta = false;
@@ -106,6 +118,7 @@ public class AnimalCatchUp {
 
             DesignationZoneAnimal zone = DesignationZoneAnimal.getZoneF(animal.getX(), animal.getY(), animal.getZ());
             if (zone == null) {
+                log("release id=%d type=%s reason=nozone", animal.getAnimalID(), animal.getAnimalType());
                 pending.remove(i);
                 release(animal);
                 continue;
@@ -116,10 +129,11 @@ public class AnimalCatchUp {
             }
 
             ArrayList<DesignationZoneAnimal> enclosure = DesignationZoneAnimal.getAllDZones(null, zone, null);
-            if (!isLoaded(enclosure) && now - animal.pendingSince < ENCLOSURE_WAIT) continue;
+            boolean loaded = isLoaded(enclosure);
+            if (!loaded && now - animal.pendingSince < ENCLOSURE_WAIT) continue;
 
             try {
-                run(enclosure, takePending(enclosure));
+                run(enclosure, takePending(enclosure), now - animal.pendingSince, !loaded);
             } catch (Exception e) {
                 ExceptionLogger.logException(e);   // the other enclosures still get their catch-up
             }
@@ -154,11 +168,14 @@ public class AnimalCatchUp {
         return animals;
     }
 
-    private static void run(ArrayList<DesignationZoneAnimal> enclosure, ArrayList<IsoAnimal> animals) {
+    private static void run(ArrayList<DesignationZoneAnimal> enclosure, ArrayList<IsoAnimal> animals, long waitedMs, boolean timedOut) {
         ArrayList<IsoAnimal> order = new ArrayList<>();
         ArrayList<IsoFeedingTrough> troughs = new ArrayList<>();
         boolean waterStarted = false;
         boolean completed = false;
+        long startedMs = System.currentTimeMillis();
+        int simulatedHours = 0;
+        grassEaten = 0;
 
         // the animals are out of `pending` already: whatever throws below, the finally must end or release them
         try {
@@ -174,12 +191,17 @@ public class AnimalCatchUp {
 
             for (IsoAnimal animal : animals) {
                 if (animal.isWild()) {
+                    log("release id=%d type=%s reason=wild", animal.getAnimalID(), animal.getAnimalType());
                     release(animal);
                     continue;
                 }
 
                 animal.beginCatchUp();
+                long clockBefore = animal.timeSinceLastUpdate;
                 int hours = animal.getCatchUpHours(now);
+                log("animal-begin enclosure=%.0f id=%d type=%s baby=%b hours=%d clock=%d survived=%.2f age=%d hunger=%.3f thirst=%.3f",
+                    enclosure.getFirst().getId(), animal.getAnimalID(), animal.getAnimalType(), animal.isBaby(), hours,
+                    clockBefore, animal.getHoursSurvived(), animal.getData().getAge(), animal.getHunger(), animal.getThirst());
                 if (hours <= 0) {
                     animal.endCatchUp();
                     continue;
@@ -220,6 +242,10 @@ public class AnimalCatchUp {
 
             long start = now - maxHours * IsoAnimal.HOUR_MS;
             double worldAgeNow = GameTime.getInstance().getWorldAgeHours();
+            simulatedHours = maxHours;
+            log("run-start enclosure=%.0f zones=%d loadedZones=%d animals=%d troughs=%d hutches=%d maxHours=%d worldAge=%.2f waitedMs=%d timedOut=%b",
+                enclosure.getFirst().getId(), enclosure.size(), loadedZones.size(), order.size(), troughs.size(), hutches.size(), maxHours,
+                worldAgeNow, waitedMs, timedOut);
             PZCalendar hourCal = PZCalendar.getInstance();
             PZCalendar animalCal = PZCalendar.getInstance();
             running = true;
@@ -273,6 +299,18 @@ public class AnimalCatchUp {
                 } catch (Exception e) {
                     ExceptionLogger.logException(e);   // don't hide an exception from the catch-up itself
                 }
+            }
+
+            for (IsoAnimal animal : order) {
+                log("animal-end enclosure=%.0f id=%d type=%s clock=%d survived=%.2f age=%d hunger=%.3f thirst=%.3f health=%.3f dead=%b",
+                    enclosure.getFirst().getId(), animal.getAnimalID(), animal.getAnimalType(), animal.timeSinceLastUpdate,
+                    animal.getHoursSurvived(), animal.getData().getAge(), animal.getHunger(), animal.getThirst(), animal.getHealth(),
+                    animal.isDead());
+            }
+
+            if (!order.isEmpty()) {
+                log("run-end enclosure=%.0f hours=%d grassEaten=%d completed=%b ms=%d", enclosure.getFirst().getId(), simulatedHours,
+                    grassEaten, completed, System.currentTimeMillis() - startedMs);
             }
         }
 

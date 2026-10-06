@@ -18,6 +18,7 @@ import zombie.GameWindow;
 import zombie.SystemDisabler;
 import zombie.UsedFromLua;
 import zombie.Lua.LuaManager;
+import zombie.characters.animals.AnimalCatchUp;
 import zombie.characters.animals.IsoAnimal;
 import zombie.core.math.PZMath;
 import zombie.core.network.ByteBufferReader;
@@ -446,8 +447,11 @@ public class IsoHutch extends IsoObject {
         if (this.getModData().rawget(DIRT_HOUR_KEY) instanceof Double last
             && hour - last.intValue() > 1
             && DesignationZoneAnimal.getZoneF(this.getX(), this.getY(), this.getZ()) != null) {
+            float dirtBefore = this.hutchDirt;
             this.doMeta(hour - last.intValue() - 1);
             this.sync();
+            AnimalCatchUp.log("hutch-dirt hutch=%d,%d,%d hours=%d dirt=%.1f->%.1f nestDirt=%.1f", this.getXi(), this.getYi(), this.getZi(),
+                hour - last.intValue() - 1, dirtBefore, this.hutchDirt, this.nestBoxDirt);
         }
 
         this.getModData().rawset(DIRT_HOUR_KEY, (double)hour);

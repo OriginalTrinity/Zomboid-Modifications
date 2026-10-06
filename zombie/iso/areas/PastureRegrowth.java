@@ -56,26 +56,30 @@ public class PastureRegrowth {
         int hours = untilHour - zone.hourLastSeen;
         if (hours < 1) return;
 
+        int fromHour = zone.hourLastSeen;
         zone.hourLastSeen = untilHour;
         int regrowthHours = Math.max(1, SandboxOptions.instance.animalGrassRegrowTime.getValue());
         float chance = (float) (1.0 - Math.pow(1.0 - 1.0 / regrowthHours, hours));
         IsoCell cell = IsoWorld.instance.getCell();
+        int regrown = 0;
 
         for (int x = zone.x; x < zone.x + zone.w; x++) {
             for (int y = zone.y; y < zone.y + zone.h; y++) {
                 IsoGridSquare sq = cell.getGridSquare(x, y, zone.z);
-                if (sq != null && Rand.Next(0.0f, 1.0f) < chance) {
-                    regrow(sq);
+                if (sq != null && Rand.Next(0.0f, 1.0f) < chance && regrow(sq)) {
+                    regrown++;
                 }
             }
         }
 
+        if (hours > 1 || regrown > 0) AnimalCatchUp.log("regrowth zone=%.0f fromHour=%d toHour=%d hours=%d chance=%.3f regrown=%d", zone.getId(), fromHour, untilHour, hours,
+            chance, regrown);
     }
 
-    private static void regrow(IsoGridSquare square) {
+    private static boolean regrow(IsoGridSquare square) {
         IsoObject floor = square.getFloor();
         if (floor == null || floor.getAttachedAnimSprite() == null || !floor.getProperties().has(IsoPropertyType.GRASS_FLOOR) || isFarmPlot(square)) {
-            return;
+            return false;
         }
 
         for (int i = 0; i < floor.getAttachedAnimSprite().size(); i++) {
@@ -84,9 +88,11 @@ public class PastureRegrowth {
                 if (GameServer.server) {
                     floor.transmitUpdatedSpriteToClients();
                 }
-                return;
+                return true;
             }
         }
+
+        return false;
     }
 
     private static boolean isFarmPlot(IsoGridSquare square) {
