@@ -2768,6 +2768,10 @@ public class IsoAnimal extends IsoPlayer implements IAnimalVisual {
     }
 
     public void pathToTrough(IsoFeedingTrough trough) {
+        this.tryPathToTrough(trough);
+    }
+
+    public boolean tryPathToTrough(IsoFeedingTrough trough) {
         if (trough != null) {
             IsoGridSquare sq1 = IsoWorld.instance.currentCell.getGridSquare(trough.getX(), trough.getY() - 1.0F, trough.getZ());
             IsoGridSquare sq2 = IsoWorld.instance.currentCell.getGridSquare(trough.getX(), trough.getY() + 1.0F, trough.getZ());
@@ -2786,7 +2790,9 @@ public class IsoAnimal extends IsoPlayer implements IAnimalVisual {
                 boolean sq2Free = sq2.isFree(false) && !sq2.isWallTo(trough.square) && !sq2.isWindowTo(trough.square);
                 boolean sq3Free = sq3.isFree(false) && !sq3.isWallTo(trough.square) && !sq3.isWindowTo(trough.square);
                 boolean sq4Free = sq4.isFree(false) && !sq4.isWallTo(trough.square) && !sq4.isWindowTo(trough.square);
-                if (sq1Free && (sq1.DistToProper(this) < sq2.DistToProper(this) || !sq2Free)) {
+                // <= : an animal exactly in line with the trough (new or dropped animals stand on square centers) is at
+                // the same distance to both sides, and vanilla's < then picked neither
+                if (sq1Free && (sq1.DistToProper(this) <= sq2.DistToProper(this) || !sq2Free)) {
                     choosenSq = sq1;
                 }
 
@@ -2795,7 +2801,7 @@ public class IsoAnimal extends IsoPlayer implements IAnimalVisual {
                 }
 
                 if (choosenSq == null) {
-                    if (sq3Free && (sq3.DistToProper(this) < sq4.DistToProper(this) || !sq4Free)) {
+                    if (sq3Free && (sq3.DistToProper(this) <= sq4.DistToProper(this) || !sq4Free)) {
                         choosenSq = sq3;
                     }
 
@@ -2805,22 +2811,20 @@ public class IsoAnimal extends IsoPlayer implements IAnimalVisual {
                 }
 
                 if (choosenSq != null) {
-                    if (!choosenSq.isFree(false)) {
-                        if (this.ignoredTrough.contains(trough)) {
-                            this.ignoredTrough.add(trough);
-                        }
-
-                        return;
-                    }
-
                     if (this.adef.distToEat < 1.0F) {
                         this.pathToLocation(trough.getXi(), trough.getYi(), trough.getZi());
                     } else {
                         this.pathToLocation(choosenSq.getX(), choosenSq.getY(), choosenSq.getZ());
                     }
+                    return true;
                 }
             }
+
+            if (!this.ignoredTrough.contains(trough)) {
+                this.ignoredTrough.add(trough);
+            }
         }
+        return false;
     }
 
     public boolean shouldBreakObstaclesDuringPathfinding() {

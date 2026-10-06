@@ -1073,16 +1073,23 @@ public class BaseAnimalBehavior {
         for (int i = 0; i < allTrough.size(); i++) {
             IsoFeedingTrough trough = allTrough.get(i);
             if (!this.parent.ignoredTrough.contains(trough) && this.canDrinkFromTrough(trough)) {
-                this.behaviorAction = BehaviorAction.DRINK;
-                this.behaviorObject = trough;
                 if (trough.getSquare() != null
-                    && this.parent.getCurrentSquare() != null
-                    && trough.getSquare().DistToProper(this.parent.getCurrentSquare()) > 1.0F) {
+                        && this.parent.getCurrentSquare() != null
+                        && trough.getSquare().DistToProper(this.parent.getCurrentSquare()) > 1.0F) {
                     this.parent.stopAllMovementNow();
-                    this.parent.pathToTrough(trough);
-                } else if (this.parent.getVehicle() == null) {
-                    this.setDoingBehavior(true);
-                    this.doBehaviorAction();
+                    if (!this.parent.tryPathToTrough(trough)) {
+                        continue;   // no reachable side, try the next trough
+                    }
+
+                    this.behaviorAction = BehaviorAction.DRINK;
+                    this.behaviorObject = trough;
+                } else {
+                    this.behaviorAction = BehaviorAction.DRINK;
+                    this.behaviorObject = trough;
+                    if (this.parent.getVehicle() == null) {
+                        this.setDoingBehavior(true);
+                        this.doBehaviorAction();
+                    }
                 }
 
                 return true;
@@ -1200,14 +1207,19 @@ public class BaseAnimalBehavior {
         for (int i = 0; i < allTrough.size(); i++) {
             IsoFeedingTrough trough = allTrough.get(i);
             if (!this.parent.ignoredTrough.contains(trough) && this.canEatFromTrough(trough)) {
-                this.behaviorAction = BehaviorAction.EATTROUGH;
-                this.behaviorObject = trough;
                 if (trough.getSquare() != null
-                    && this.parent.getCurrentSquare() != null
-                    && trough.getSquare().DistToProper(this.parent.getCurrentSquare()) > 1.0F) {
+                        && this.parent.getCurrentSquare() != null
+                        && trough.getSquare().DistToProper(this.parent.getCurrentSquare()) > 1.0F) {
                     this.parent.stopAllMovementNow();
-                    this.parent.pathToTrough(trough);
+                    if (!this.parent.tryPathToTrough(trough)) {
+                        continue;   // no reachable side, try the next trough (then grass)
+                    }
+
+                    this.behaviorAction = BehaviorAction.EATTROUGH;
+                    this.behaviorObject = trough;
                 } else {
+                    this.behaviorAction = BehaviorAction.EATTROUGH;
+                    this.behaviorObject = trough;
                     this.setDoingBehavior(true);
                     this.doBehaviorAction();
                 }
