@@ -8,6 +8,7 @@ import zombie.iso.IsoGridSquare;
 import zombie.iso.IsoPuddles;
 import zombie.iso.IsoWorld;
 import zombie.iso.areas.DesignationZoneAnimal;
+import zombie.iso.areas.PastureRegrowth;
 import zombie.iso.objects.IsoFeedingTrough;
 import zombie.iso.objects.IsoHutch;
 import zombie.network.GameClient;
@@ -211,6 +212,12 @@ public class AnimalCatchUp {
                 }
             }
 
+            // regrowth only for fully loaded zones: tick() advances a zone's clock but can only regrow loaded squares
+            ArrayList<DesignationZoneAnimal> loadedZones = new ArrayList<>();
+            for (DesignationZoneAnimal zone : enclosure) {
+                if (zone.isAllChunksLoaded()) loadedZones.add(zone);
+            }
+
             long start = now - maxHours * IsoAnimal.HOUR_MS;
             double worldAgeNow = GameTime.getInstance().getWorldAgeHours();
             PZCalendar hourCal = PZCalendar.getInstance();
@@ -227,6 +234,11 @@ public class AnimalCatchUp {
                 int hourOfDay = hourCal.get(Calendar.HOUR_OF_DAY);
                 CatchUpWater.addRain(troughs, hourStart, worldAgeHour);
                 puddles = CatchUpWater.hasPuddles(worldAgeHour);
+                if (hourOfDay == 0) {
+                    PastureRegrowth.tick(loadedZones, (int) worldAgeHour);
+                    collectGrass(enclosure);
+                }
+
                 Collections.shuffle(order);
                 order.sort(ADULTS_FIRST);
                 HashMap<IsoHutch, Integer> hutchRoom = new HashMap<>();
@@ -240,6 +252,7 @@ public class AnimalCatchUp {
             }
 
             completed = true;
+            PastureRegrowth.tick(loadedZones, (int) worldAgeNow);
         } finally {
             running = false;
             puddles = false;

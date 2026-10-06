@@ -10810,6 +10810,10 @@ public final class IsoGridSquare {
                 return false;
             }
 
+            if (DesignationZoneAnimal.getZone(this.x, this.y, this.z) != null) {
+                return true;
+            }
+
             Zone zone = this.getGrassRegrowthZone();
             if (zone == null) {
                 zone = IsoWorld.instance.getMetaGrid().registerZone("", "GrassRegrowth", this.x - 20, this.y - 20, this.z, 40, 40);

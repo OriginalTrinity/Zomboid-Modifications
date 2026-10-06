@@ -79,6 +79,7 @@ import zombie.inventory.ItemSpawner;
 import zombie.inventory.types.InventoryContainer;
 import zombie.iso.SpriteDetails.IsoFlagType;
 import zombie.iso.SpriteDetails.IsoObjectType;
+import zombie.iso.areas.DesignationZoneAnimal;
 import zombie.iso.areas.IsoBuilding;
 import zombie.iso.areas.IsoRoom;
 import zombie.iso.enums.ChunkGenerationStatus;
@@ -4133,6 +4134,36 @@ public final class IsoChunk {
         }
     }
 
+    // pasture tiles regrow through PastureRegrowth, so the old 40x40 zones skip them
+    private static ArrayList<DesignationZoneAnimal> getPasturesIntersecting(Zone zone) {
+        ArrayList<DesignationZoneAnimal> result = new ArrayList<>();
+        ArrayList<DesignationZoneAnimal> all = DesignationZoneAnimal.getAllZones();
+
+        for (int i = 0; i < all.size(); i++) {
+            DesignationZoneAnimal pasture = all.get(i);
+            if (pasture.z == zone.z
+                && pasture.x < zone.x + zone.getWidth()
+                && zone.x < pasture.x + pasture.w
+                && pasture.y < zone.y + zone.getHeight()
+                && zone.y < pasture.y + pasture.h) {
+                result.add(pasture);
+            }
+        }
+
+        return result;
+    }
+
+    private static boolean isInPasture(ArrayList<DesignationZoneAnimal> pastures, int x, int y, int z) {
+        for (int i = 0; i < pastures.size(); i++) {
+            DesignationZoneAnimal pasture = pastures.get(i);
+            if (x >= pasture.x && x < pasture.x + pasture.w && y >= pasture.y && y < pasture.y + pasture.h && pasture.z == z) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private void CheckGrassRegrowth() {
         IsoMetaChunk metaChunk = IsoWorld.instance.getMetaChunk(this.wx, this.wy);
         if (metaChunk != null) {
@@ -4146,11 +4177,15 @@ public final class IsoChunk {
                         IsoGridSquare sq2 = IsoWorld.instance.getCell().getGridSquare(zone.x + zone.getWidth(), zone.y + zone.getHeight(), zone.z);
                         if (sq != null && sq2 != null) {
                             zone.setLastActionTimestamp(0);
+                            ArrayList<DesignationZoneAnimal> pastures = getPasturesIntersecting(zone);
 
                             for (int x = zone.x; x < zone.x + zone.getWidth(); x++) {
                                 for (int y = zone.y; y < zone.y + zone.getHeight(); y++) {
                                     sq = IsoWorld.instance.getCell().getGridSquare(x, y, zone.z);
-                                    if (sq != null && sq.getFloor() != null && sq.getFloor().getAttachedAnimSprite() != null) {
+                                    if (sq != null
+                                        && !isInPasture(pastures, x, y, zone.z)
+                                        && sq.getFloor() != null
+                                        && sq.getFloor().getAttachedAnimSprite() != null) {
                                         for (int j = 0; j < sq.getFloor().getAttachedAnimSprite().size(); j++) {
                                             IsoSprite sprite = sq.getFloor().getAttachedAnimSprite().get(j).parentSprite;
                                             if ("blends_natural_01_87".equals(sprite.getName())) {

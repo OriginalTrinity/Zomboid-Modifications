@@ -3,7 +3,6 @@ package zombie.iso.areas;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
-import zombie.GameTime;
 import zombie.GameWindow;
 import zombie.UsedFromLua;
 import zombie.characters.animals.AnimalCatchUp;
@@ -164,7 +163,6 @@ public class DesignationZone {
     public void unloading() {
         if (!this.isStillStreamed() && this.streamed) {
             this.streamed = false;
-            this.hourLastSeen = (int)GameTime.getInstance().getWorldAgeHours();
         }
     }
 
@@ -183,7 +181,6 @@ public class DesignationZone {
 
         if ((sq == null || sq2 == null) && this.streamed) {
             this.streamed = false;
-            this.hourLastSeen = (int)GameTime.getInstance().getWorldAgeHours();
         }
     }
 
@@ -237,6 +234,7 @@ public class DesignationZone {
 
             if (!GameClient.client) {
                 AnimalCatchUp.update();
+                PastureRegrowth.update();
             }
         }
     }
@@ -307,6 +305,7 @@ public class DesignationZone {
     public static void Reset() {
         allZones.clear();
         AnimalCatchUp.reset();
+        PastureRegrowth.reset();
     }
 
     public Double getId() {
