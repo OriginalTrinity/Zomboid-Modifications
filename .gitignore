@@ -21,6 +21,9 @@
 !/zombie/network/packets/ThermostatPacket.java
 !/zombie/iso/weather/compat/ArcadiaRVInterior.java
 !/zombie/iso/weather/Thermostat.java
+!/zombie/characters/animals/AnimalCatchUp.java
+!/zombie/iso/areas/PastureRegrowth.java
+!/zombie/characters/animals/CatchUpWater.java
 
 # --- Modified vanilla files: thermal simulation ---
 !/zombie/GameWindow.java
@@ -58,6 +61,15 @@
 !/zombie/iso/areas/DesignationZoneAnimal.java
 !/zombie/network/packets/SyncZonePacket.java
 !/zombie/world/ScriptsDictionary.java
+!/zombie/characters/animals/AnimalDefinitions.java
+!/zombie/characters/animals/datas/AnimalData.java
+!/zombie/characters/animals/IsoAnimal.java
+!/zombie/iso/objects/IsoHutch.java
+!/zombie/characters/animals/AnimalManagerMain.java
+!/zombie/iso/areas/DesignationZone.java
+!/zombie/iso/IsoGridSquare.java
+!/zombie/characters/animals/behavior/BaseAnimalBehavior.java
+!/zombie/iso/objects/IsoFeedingTrough.java
 
 # --- Modified vanilla files: networking ---
 !zombie/network/packets/vehicle/VehiclePhysicsUnreliablePacket.java
